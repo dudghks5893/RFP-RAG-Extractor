@@ -1,4 +1,4 @@
-# 🚀 RFP-Pulse: 지능형 입찰 제안서(RFP) 분석 및 요약 RAG 시스템
+# 🚀 RFP-RAG-Extractor: 지능형 입찰 제안서(RFP) 분석 및 요약 RAG 시스템
 
 > **B2G 입찰지원 전문 컨설팅 스타트업 – ‘입찰메이트’ 사내 프로젝트**  
 > "최적의 RAG 아키텍처를 찾기 위한 시나리오별 비교 실험: 자체 구축 vs API 활용"
@@ -81,8 +81,8 @@
 
 ```bash
 # 저장소 복제
-git clone [https://github.com/your-repo/RFP-Pulse.git](https://github.com/your-repo/RFP-Pulse.git)
-cd RFP-Pulse
+git clone [https://github.com/dudghks5893/RFP-RAG-Extractor.git](https://github.com/dudghks5893/RFP-RAG-Extractor.git)
+cd RFP-RAG-Extractor
 
 # 가상환경 활성화
 source /opt/jhub-venv/bin/activate
