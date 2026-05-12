@@ -84,8 +84,12 @@
 git clone [https://github.com/dudghks5893/RFP-RAG-Extractor.git](https://github.com/dudghks5893/RFP-RAG-Extractor.git)
 cd RFP-RAG-Extractor
 
-# 가상환경 활성화
+# GCP 관리자 전체 가상환경 활성화
 source /opt/jhub-venv/bin/activate
+
+# 개인 주피터 가상환경 활성화
+source ~/myenv/bin/activate
+
 
 # 필수 패키지 설치
 pip install -r requirements.txt
