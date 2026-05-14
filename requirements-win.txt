@@ -1,8 +1,8 @@
 # 공통 사항 설치
 -r requirements-common.txt
 
-# PyTorch (윈도우 + NVIDIA GPU가 있는 경우)
---index-url https://download.pytorch.org/whl/cu124
+# PyTorch (윈도우 + NVIDIA GPU 전용)
+--extra-index-url https://download.pytorch.org/whl/cu124
 torch==2.6.0
 torchvision==0.21.0
 torchaudio==2.6.0
