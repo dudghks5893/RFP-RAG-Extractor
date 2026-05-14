@@ -1,0 +1,22 @@
+# 데이터 및 설정
+pandas
+numpy
+python-dotenv
+pyyaml
+
+# 문서 파싱 및 RAG
+pymupdf
+pdfplumber
+langchain
+langchain-community
+langchain-openai
+langchain-core
+tiktoken
+chromadb
+faiss-cpu
+
+# 평가
+ragas
+
+# 주피터 환경
+ipykernel

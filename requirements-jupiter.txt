@@ -1,0 +1,11 @@
+# 공통 사항 먼저 설치 유도
+-r requirements-common.txt
+
+# PyTorch 2.6.0 + CUDA 12.4 (GCP VM 전용)
+--index-url https://download.pytorch.org/whl/cu124
+torch==2.6.0
+torchvision==0.21.0
+torchaudio==2.6.0
+
+# HWP 파싱 (리눅스 기반 환경)
+pyhwp
