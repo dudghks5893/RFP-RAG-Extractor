@@ -67,6 +67,66 @@
 
 ---
 
+
+```
+bidding-mate-rag/
+│
+├── data/                      # 데이터 저장소 (Git에 올라가지 않도록 .gitignore 처리 필수)
+│   ├── raw/                   # 원본 데이터 (100개의 HWP, PDF 파일 및 data_list.csv)
+│   ├── processed/             # 전처리된 텍스트, 분할된 청크 데이터 등
+│   └── vector_db/             # 로컬에 저장되는 Vector DB 파일 (ChromaDB, FAISS 등 사용 시)
+│
+├── notebooks/                 # 팀원별/기능별 실험용 Jupyter Notebook
+│   ├── member1/               # 팀원 각자의 실험 공간 (Git 충돌 방지용)
+│   ├── member2/
+│   ├── 01_data_eda.ipynb      # 메타데이터 분석 및 데이터 탐색
+│   ├── 02_pdf_hwp_parsing.ipynb # 문서 파싱 실험
+│   ├── 03_chunking_exp.ipynb  # 청킹 전략 실험
+│   ├── 04_scenario_b_api.ipynb# 시나리오 B (LLM API 기반) 실험
+│   └── 05_scenario_a_loc.ipynb# 시나리오 A (로컬/클라우드 직접 구축) 실험
+│
+├── src/                       # 핵심 파이썬 모듈 (Notebook에서 import 하여 사용)
+│   ├── __init__.py
+│   ├── data_loader/           # 데이터 불러오기 및 파싱
+│   │   ├── __init__.py
+│   │   ├── pdf_parser.py      # PDF 추출 로직 (PyMuPDF, pdfplumber 등)
+│   │   └── hwp_parser.py      # HWP 추출 로직 (hwp5txt, OLE 파싱 등)
+│   │
+│   ├── chunking/              # 문서 청킹 로직
+│   │   ├── __init__.py
+│   │   └── splitter.py        # RecursiveCharacter, Semantic 분할, 중첩(Overlap) 등
+│   │
+│   ├── retrieval/             # 검색 및 Vector DB 관련 로직
+│   │   ├── __init__.py
+│   │   ├── vector_store.py    # DB 연결, 임베딩, 데이터 적재
+│   │   └── searcher.py        # 메타데이터 필터링, MMR, Hybrid Search, Re-ranking 로직
+│   │
+│   ├── generation/            # 답변 생성 및 LLM 연결
+│   │   ├── __init__.py
+│   │   ├── prompts.py         # 프롬프트 템플릿 관리 (RAG 컨텍스트 반영 로직)
+│   │   └── llm_client.py      # 시나리오 A/B에 따른 LLM 호출 래퍼 함수
+│   │
+│   └── evaluation/            # 성능 평가 로직
+│       ├── __init__.py
+│       ├── metrics.py         # 정량적/정성적 평가지표 계산 로직
+│       └── test_cases.py      # 제공된 질문 세트 테스트 자동화 로직
+│
+├── configs/                   # 환경 설정 파일 (청크 사이즈, k값, 모델 파라미터 등)
+│   ├── config.yaml            # 하이퍼파라미터 및 설정값 (chunk_size, top_k, temperature 등)
+│   └── prompt_templates.json  # 시스템 프롬프트 등
+│
+├── app/                       # (선택) 최종 결과물 데모용 폴더
+│   └── main.py                # Streamlit 또는 Gradio를 이용한 챗봇 UI
+│
+├── .env                       # API 키, DB 비밀번호 등 (절대 Git에 올리지 않음!)
+├── .gitignore                 # 무시할 파일 목록 (data폴더, .env, __pycache__ 등)
+├── requirements.txt           # 프로젝트 의존성 패키지 목록
+└── README.md                  # 프로젝트 설명, 팀원 역할, 실행 방법 등
+```
+
+
+
+
 ## 👥 팀원 (Team Members)
 
 | 이름 | 역할 | GitHub |
