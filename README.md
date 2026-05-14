@@ -153,6 +153,10 @@ source ~/myenv/bin/activate
 
 
 # 필수 패키지 설치
+
+# 현재 설치된 모든 패키지를 리스트업해서 한꺼번에 삭제 (필요 시 사용)
+pip freeze | xargs pip uninstall -y
+
 # Mac 전용 설정으로 설치 (MPS(Metal) 가속 또는 CPU 사용)
 pip install -r requirements-mac.txt
 
