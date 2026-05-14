@@ -153,7 +153,14 @@ source ~/myenv/bin/activate
 
 
 # 필수 패키지 설치
-pip install -r requirements.txt
+# Mac 전용 설정으로 설치 (MPS(Metal) 가속 또는 CPU 사용)
+pip install -r requirements-mac.txt
+
+# Windows 전용 설정으로 설치 (윈도우용 CUDA 또는 CPU 사용)
+pip install -r requirements-win.txt
+
+# 주피터 전용 설정으로 설치 (리눅스용 CUDA 커널 사용)
+pip install -r requirements-jupiter.txt
 
 # 시나리오 선택 실행 (예시)
 python main.py --scenario A
