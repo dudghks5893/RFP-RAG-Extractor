@@ -21,5 +21,9 @@ nltk
 ranx>=0.3.16
 rouge-score
 
+# 로딩
+tqdm
+
 # 주피터 환경
 ipykernel
+ipywidgets
