@@ -1,6 +1,6 @@
 # 데이터 및 설정
 pandas
-numpy
+numpy<2.0.0
 python-dotenv
 pyyaml
 
@@ -17,6 +17,9 @@ faiss-cpu
 
 # 평가
 ragas
+nltk
+ranx>=0.3.16
+rouge-score
 
 # 주피터 환경
 ipykernel
