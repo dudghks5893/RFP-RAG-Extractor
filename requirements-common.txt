@@ -1,27 +1,34 @@
-# 데이터 및 설정
+# 데이터 전처리 및 문서 파싱
 pandas
 numpy<2.0.0
 python-dotenv
 pyyaml
-
-# 문서 파싱 및 RAG
 pymupdf
 pdfplumber
+python-docx          # DOCX 파일 진짜 파싱용 추가
+
+# 머신러닝 / 딥러닝 백엔드 및 가속
+accelerate           # GPU 분산 적재 및 LLM 구동 가속화 추가
+
+# 임베딩 및 트랜스포머 모델
+sentence-transformers # KURE-v1 내부 가동용 기반 패키지 추가
+transformers         # 하깅페이스 모델 로드 코어 패키지 추가
+
+# LangChain 최적화 생태계
 langchain
 langchain-community
-langchain-openai
 langchain-core
+langchain-huggingface  # GPU 실전 모델 연동용 핵심 패키지 추가
+langchain-openai
 tiktoken
 chromadb
 faiss-cpu
 
-# 평가
+# 평가 및 모니터링
 ragas
 nltk
 ranx>=0.3.16
 rouge-score
-
-# 로딩
 tqdm
 
 # 주피터 환경
