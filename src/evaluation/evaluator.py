@@ -1,11 +1,9 @@
 # src/evaluation/evaluator.py
 
 import os
-import json
 import collections
 import pandas as pd
 from typing import List, Dict, Any
-from tqdm.auto import tqdm
 
 # ---------------------------------------------------------
 # [사전 준비] 라이브러리 로드 (필요시 pip install ranx nltk rouge-score)
