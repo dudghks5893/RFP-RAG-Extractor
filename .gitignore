@@ -55,6 +55,7 @@ data/processed/
 *.pdf
 *.hwp
 *.docx
+*.csv
 
 # Vector Store Indices
 vector_store/

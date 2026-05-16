@@ -1,7 +1,6 @@
-# src/evaluation/evaluator.py
-
 import os
 import collections
+import hashlib  # 고유 ID 해싱을 위해 추가
 import pandas as pd
 from typing import List, Dict, Any
 
@@ -34,6 +33,22 @@ class RAGEvaluator:
         nltk.download('punkt_tab', quiet=True)
         self.smoothie = SmoothingFunction().method1
         self.scorer = rouge_scorer.RougeScorer(['rougeL'], use_stemmer=True)
+
+    # ---------------------------------------------------------
+    # 고유 ID 추출 헬퍼 메서드
+    # ---------------------------------------------------------
+    def get_doc_id(self, doc: Any) -> str:
+        """ 
+        LangChain Document 객체나 딕셔너리에서 고유 ID를 안전하게 추출합니다. 
+        만약 ID가 메타데이터에 없을 경우, 텍스트 내용을 기반으로 16자리 고유 해시값을 만듭니다.
+        """
+        metadata = getattr(doc, "metadata", {}) or {}
+        if metadata.get("doc_id") is not None: return str(metadata["doc_id"])
+        if metadata.get("chunk_id") is not None: return str(metadata["chunk_id"])
+        
+        # ID 세팅이 안 된 날것의 청크인 경우 본문 기반 해싱 기법 적용
+        content = getattr(doc, "page_content", str(doc))
+        return hashlib.md5(str(content).encode('utf-8')).hexdigest()[:16]
 
     # ---------------------------------------------------------
     # 1. 독립 평가: Retrieval (검색 성능)
@@ -140,4 +155,4 @@ class RAGEvaluator:
             
         # 4. 파일 저장 (utf-8-sig로 저장해야 엑셀에서 한글이 안 깨짐)
         df.to_csv(output_csv, index=False, encoding='utf-8-sig')
-        print(f"📝 새로운 사용자 질문이 '{output_csv}' 파일에 추가되었습니다! (현재 총 {len(df)}건 누적)")
+        print(f"새로운 사용자 질문이 '{output_csv}' 파일에 추가되었습니다! (현재 총 {len(df)}건 누적)")

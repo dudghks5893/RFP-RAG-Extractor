@@ -5,7 +5,3 @@
 torch
 torchvision
 torchaudio
-
-# HWP 파싱 (Mac 환경)
-# (참고: Mac에서는 olefile 등을 활용한 별도 파서 사용 권장)
-olefile

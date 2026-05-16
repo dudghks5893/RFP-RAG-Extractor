@@ -5,7 +5,8 @@ python-dotenv
 pyyaml
 pymupdf
 pdfplumber
-python-docx          # DOCX 파일 진짜 파싱용 추가
+python-docx          # DOCX 파일 파싱용 추가
+olefile              # HWP 크로스플랫폼 가벼운 파싱용 패키지 추가!
 
 # 머신러닝 / 딥러닝 백엔드 및 가속
 accelerate           # GPU 분산 적재 및 LLM 구동 가속화 추가
@@ -33,4 +34,5 @@ tqdm
 
 # 주피터 환경
 ipykernel
-ipywidgets
+ipywidgets            # 주피터 위젯 코어 패키지
+widgetsnbextension    # 위젯 애니메이션 확장 플러그인
