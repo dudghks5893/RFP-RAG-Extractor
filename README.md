@@ -69,7 +69,7 @@
 
 ## 프로젝트 구조
 ```
-bidding-mate-rag/
+RFP-RAG-Extractor/
 │
 ├── data/                      # 데이터 저장소 (Git에 올라가지 않도록 .gitignore 처리 필수)
 │   ├── raw/                   # 원본 데이터 (100개의 HWP, PDF 파일 및 data_list.csv)
