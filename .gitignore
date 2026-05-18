@@ -44,7 +44,6 @@ node_modules/
 *.key
 secrets.yaml
 # GCP Service Account Key
-*.json
 !example.json
 !credentials.example.json
 
@@ -56,6 +55,7 @@ data/processed/
 *.hwp
 *.docx
 *.csv
+*.json
 
 # Vector Store Indices
 vector_store/
