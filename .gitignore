@@ -49,6 +49,7 @@ secrets.yaml
 
 ### Data & Vector DB (Large Files) ###
 # 실제 RFP 문서 (PDF, HWP 등)
+data/
 data/raw/
 data/processed/
 *.pdf
