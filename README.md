@@ -132,7 +132,7 @@ RFP-RAG-Extractor/
 | 이름 | 역할 | GitHub |
 | :--- | :--- | :--- |
 | **채영환** | 역할1 | [@dudghks5893](https://github.com/dudghks5893) |
-| **원숙현** | 역할2 | [@sooq.won@gmail.com](https://github.com/id) |
+| **원숙현** | 역할2 | [@sooqhyunwon](https://github.com/id) |
 | **한성택** | 역할3 | [@zoyhanee](https://github.com/id) |
 | **양기우** | 역할4 | [@yang12-1](https://github.com/id) |
 
