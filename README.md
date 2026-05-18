@@ -149,7 +149,7 @@ cd RFP-RAG-Extractor
 source /opt/jhub-venv/bin/activate
 
 # 개인 주피터 가상환경 활성화
-source ~/.venv/bin/activate
+source .venv/bin/activate
 
 
 # 필수 패키지 설치
