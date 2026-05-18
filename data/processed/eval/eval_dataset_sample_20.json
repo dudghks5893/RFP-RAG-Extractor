@@ -1,0 +1,606 @@
+[
+  {
+    "qid": "20240330003_llm_1",
+    "question": "2024년 벤처확인종합관리시스템 기능 고도화 사업에서 고도화하거나 신규로 구축하는 주요 기능은 무엇인가요?",
+    "reference": "복수의결권주식의 발행 보고 업무처리 시스템 구축, 벤처기업법에 따라 부여된 스톡옵션(주식매수선택권)의 부여·취소·철회 신고 및 업무시스템 구축, 성과조건부주식교부계약(RS)의 신고 및 업무처리 시스템 구축 등 세 가지 기능의 구축 및 고도화이다.",
+    "required_keyword_groups": [
+      [
+        "복수의결권주식",
+        "복수 의결권"
+      ],
+      [
+        "스톡옵션",
+        "주식매수선택권",
+        "스톡 옵션"
+      ],
+      [
+        "성과조건부주식교부",
+        "성과조건부주식교부계약",
+        "RS"
+      ]
+    ],
+    "doc_id": "20240330003",
+    "question_type": "llm_1",
+    "source_type": "document",
+    "answer_format": "list",
+    "source_row_id": 86,
+    "project_name": "2024년 벤처확인종합관리시스템 기능 고도화 용역사업 입찰공고",
+    "organization": "(사)벤처기업협회",
+    "file_name": "(사)벤처기업협회_2024년 벤처확인종합관리시스템 기능 고도화 용역사업 .hwp",
+    "file_type": "hwp"
+  },
+  {
+    "qid": "20240404154_fact_budget",
+    "question": "서울특별시에서 발주한 '2024년 지도정보 플랫폼 및 전문활용 연계 시스템 고도화 용역' 사업의 배정 예산은 얼마인가요?",
+    "reference": "493,763,000원 입니다.",
+    "required_keyword_groups": [
+      [
+        "493,763,000원",
+        "493763000원",
+        "4억9천3백7십6만원"
+      ]
+    ],
+    "doc_id": "20240404154",
+    "question_type": "fact_budget",
+    "source_type": "metadata",
+    "answer_format": "money",
+    "source_row_id": 39,
+    "project_name": "2024년 지도정보 플랫폼 및 전문활용 연계 시스템 고도화 용역",
+    "organization": "서울특별시",
+    "file_name": "서울특별시_2024년 지도정보 플랫폼 및 전문활용 연계 시스템 고도화 용.pdf",
+    "file_type": "pdf"
+  },
+  {
+    "qid": "20240408682_llm_1",
+    "question": "GKL 그룹웨어 시스템 구축사업의 사업기간은 언제까지인가요?",
+    "reference": "계약일로부터 6개월 이내입니다.",
+    "required_keyword_groups": [
+      [
+        "계약일로부터",
+        "계약일"
+      ],
+      [
+        "6개월",
+        "6개월 이내",
+        "6개월 이내입니다"
+      ]
+    ],
+    "doc_id": "20240408682",
+    "question_type": "llm_1",
+    "source_type": "document",
+    "answer_format": "period",
+    "source_row_id": 93,
+    "project_name": "2024년도 GKL  그룹웨어 시스템 구축 용역",
+    "organization": "그랜드코리아레저(주)",
+    "file_name": "그랜드코리아레저(주)_2024년도 GKL  그룹웨어 시스템 구축 용역.hwp",
+    "file_type": "hwp"
+  },
+  {
+    "qid": "20240430896_llm_2",
+    "question": "자가진단표와 관련된 사업범위는 무엇이며, 제출해야 할 별지서식 번호는 어느 것인가요?",
+    "reference": "사업범위는 자가진단표 분야에 대한 사업수행실적 평가표이며, 관련 별지서식은 별지서식 11호(정량 평가 자가진단표)이다.",
+    "required_keyword_groups": [
+      [
+        "자가진단표",
+        "자가 진단표",
+        "정량 평가"
+      ],
+      [
+        "사업범위",
+        "사업수행실적 평가표"
+      ],
+      [
+        "별지서식 11호",
+        "별지서식11호",
+        "11호"
+      ]
+    ],
+    "doc_id": "20240430896",
+    "question_type": "llm_2",
+    "source_type": "document",
+    "answer_format": "list",
+    "source_row_id": 4,
+    "project_name": "봉화군 재난통합관리시스템 고도화 사업(협상)(긴급)",
+    "organization": "경상북도 봉화군",
+    "file_name": "경상북도 봉화군_봉화군 재난통합관리시스템 고도화 사업(협상)(긴급).hwp",
+    "file_type": "hwp"
+  },
+  {
+    "qid": "20240430918_fact_budget",
+    "question": "인천광역시에서 발주한 '도시계획위원회 통합관리시스템 구축용역' 사업의 배정 예산은 얼마인가요?",
+    "reference": "150,000,000원 입니다.",
+    "required_keyword_groups": [
+      [
+        "150,000,000원",
+        "150000000원",
+        "1억5천만원"
+      ]
+    ],
+    "doc_id": "20240430918",
+    "question_type": "fact_budget",
+    "source_type": "metadata",
+    "answer_format": "money",
+    "source_row_id": 3,
+    "project_name": "도시계획위원회 통합관리시스템 구축용역",
+    "organization": "인천광역시",
+    "file_name": "인천광역시_도시계획위원회 통합관리시스템 구축용역.hwp",
+    "file_type": "hwp"
+  },
+  {
+    "qid": "20240430918_llm_2",
+    "question": "과업내용 변경이나 계약금액·기간 조정이 필요할 때 어떤 절차로 요청해야 하고, 그 요청을 수용해야 할 주체는 누구인가요?",
+    "reference": "과업내용 변경 및 계약금액·계약기간 조정이 필요하면 계약상대자는 국가기관등의 장에게 소프트웨어사업 과업변경요청서를 제출하여 과업심의위원회 개최를 요청할 수 있고, 국가기관등의 장은 과업심의위원회 개최요청에 대해 특별한 사정이 없으면 수용해야 합니다.",
+    "required_keyword_groups": [
+      [
+        "과업변경요청서",
+        "소프트웨어사업 과업변경요청서",
+        "과업변경 요청서 제출"
+      ],
+      [
+        "제출 대상",
+        "국가기관등의 장",
+        "국가기관의 장"
+      ],
+      [
+        "요청 처리 의무",
+        "과업심의위원회 개최 요청",
+        "특별한 사정이 없으면 수용",
+        "수용해야 함"
+      ],
+      [
+        "관련 법령",
+        "소프트웨어 진흥법 제50조",
+        "시행령 제47조"
+      ]
+    ],
+    "doc_id": "20240430918",
+    "question_type": "llm_2",
+    "source_type": "document",
+    "answer_format": "period",
+    "source_row_id": 3,
+    "project_name": "도시계획위원회 통합관리시스템 구축용역",
+    "organization": "인천광역시",
+    "file_name": "인천광역시_도시계획위원회 통합관리시스템 구축용역.hwp",
+    "file_type": "hwp"
+  },
+  {
+    "qid": "20240523741_llm_1",
+    "question": "이 사업의 주관기관은 어디인가요?",
+    "reference": "축산물품질평가원",
+    "required_keyword_groups": [
+      [
+        "축산물품질평가원",
+        "EKAPE"
+      ]
+    ],
+    "doc_id": "20240523741",
+    "question_type": "llm_1",
+    "source_type": "document",
+    "answer_format": "summary",
+    "source_row_id": 32,
+    "project_name": "축산물이력관리시스템 개선(정보화 사업)",
+    "organization": "축산물품질평가원",
+    "file_name": "축산물품질평가원_축산물이력관리시스템 개선(정보화 사업).hwp",
+    "file_type": "hwp"
+  },
+  {
+    "qid": "20240531285_llm_1",
+    "question": "이 사업에서 웹사이트 고도화 시 핵심적으로 요구되는 신규 개발 및 개선 항목은 무엇인가요?",
+    "reference": "웹사이트 고도화는 국가교육과정 관련 정보의 표준화·체계화, 사용자 편의성(UI/UX)을 고려한 전면 개편, 현행 설문조사 시스템의 장기적 활용을 위한 데이터 누적관리 체계 구축, 사용자 로그인 및 관리 기능 신규 개발, 국가교육과정정보센터 접속자 통계 기록 및 데이터 추출 기능 신규 개발 등을 포함한다.",
+    "required_keyword_groups": [
+      [
+        "표준화",
+        "체계화",
+        "정보 표준화"
+      ],
+      [
+        "UI/UX",
+        "전면 개편",
+        "사용자 편의성"
+      ],
+      [
+        "데이터 누적관리",
+        "데이터 누적",
+        "누적·관리 체계"
+      ],
+      [
+        "사용자 로그인",
+        "로그인",
+        "관리 기능"
+      ],
+      [
+        "접속자 통계",
+        "데이터 추출",
+        "통계 기록"
+      ]
+    ],
+    "doc_id": "20240531285",
+    "question_type": "llm_1",
+    "source_type": "document",
+    "answer_format": "list",
+    "source_row_id": 67,
+    "project_name": "국가교육과정정보센터(NCIC) 시스템 운영 및 개선",
+    "organization": "한국교육과정평가원",
+    "file_name": "한국교육과정평가원_국가교육과정정보센터(NCIC) 시스템 운영 및 개선.hwp",
+    "file_type": "hwp"
+  },
+  {
+    "qid": "20240531542_llm_2",
+    "question": "이 사업이 추진되는 배경(주요 문제)은 무엇이고, 사업범위에는 어떤 내용이 포함되나요?",
+    "reference": "추진배경은 응급실 섭외 지연(병원 전 단계에서 치료 가능한 응급실 섭외 문제)과 병원 간 전원(전송) 체계의 취약성으로, 중증응급환자 전원 시 다수 의료기관에 수용 요청이 필요한 상황(자료상 평균 9.3개 기관에 전원의뢰, KTAS 1·2 환자의 전원 비율 13.5%)이 문제로 제기되었습니다. 사업범위는 전국 병원 간 전원 및 재난 조정 업무를 위한 콜센터 구축과 통신장비 도입 등입니다.",
+    "required_keyword_groups": [
+      [
+        "응급실 섭외 지연",
+        "뺑뺑이 사건",
+        "병원 전 단계",
+        "섭외 문제"
+      ],
+      [
+        "병원 간 전원 취약",
+        "전원 취약",
+        "전원의뢰 평균 9.3개",
+        "KTAS 1,2 13.5%"
+      ],
+      [
+        "콜센터 구축",
+        "전국 병원 간 전원",
+        "재난 조정",
+        "통신장비 도입"
+      ]
+    ],
+    "doc_id": "20240531542",
+    "question_type": "llm_2",
+    "source_type": "document",
+    "answer_format": "list",
+    "source_row_id": 69,
+    "project_name": "(긴급)「2024년도 차세대 응급의료 상황관리시스템 구축」 위탁용역",
+    "organization": "국립중앙의료원",
+    "file_name": "국립중앙의료원_(긴급)「2024년도 차세대 응급의료 상황관리시스템 구축.hwp",
+    "file_type": "hwp"
+  },
+  {
+    "qid": "20240723270_fact_budget",
+    "question": "한국연구재단에서 발주한 '2024년 기초학문자료센터 시스템 운영 및 연구성과물 DB구축 사업' 사업의 배정 예산은 얼마인가요?",
+    "reference": "212,300,000원 입니다.",
+    "required_keyword_groups": [
+      [
+        "212,300,000원",
+        "212300000원",
+        "2억1천2백3십만원"
+      ]
+    ],
+    "doc_id": "20240723270",
+    "question_type": "fact_budget",
+    "source_type": "metadata",
+    "answer_format": "money",
+    "source_row_id": 43,
+    "project_name": "2024년 기초학문자료센터 시스템 운영 및 연구성과물 DB구축 사업",
+    "organization": "한국연구재단",
+    "file_name": "한국연구재단_2024년 기초학문자료센터 시스템 운영 및 연구성과물 DB구.hwp",
+    "file_type": "hwp"
+  },
+  {
+    "qid": "20240827859_fact_budget",
+    "question": "한국생산기술연구원에서 발주한 'EIP3.0 고압가스 안전관리 시스템 구축 용역' 사업의 배정 예산은 얼마인가요?",
+    "reference": "40,000,000원 입니다.",
+    "required_keyword_groups": [
+      [
+        "40,000,000원",
+        "40000000원",
+        "4천만원"
+      ]
+    ],
+    "doc_id": "20240827859",
+    "question_type": "fact_budget",
+    "source_type": "metadata",
+    "answer_format": "money",
+    "source_row_id": 2,
+    "project_name": "EIP3.0 고압가스 안전관리 시스템 구축 용역",
+    "organization": "한국생산기술연구원",
+    "file_name": "한국생산기술연구원_EIP3.0 고압가스 안전관리 시스템 구축 용역.hwp",
+    "file_type": "hwp"
+  },
+  {
+    "qid": "20240903688_llm_1",
+    "question": "이 사업에서 구축하려는 시스템의 기술 기반은 무엇인가요?",
+    "reference": "JST 공유대학(원) 내에 xAPI 기반의 LRS(학습기록저장소) 시스템을 구축하는 것입니다.",
+    "required_keyword_groups": [
+      [
+        "xAPI"
+      ],
+      [
+        "LRS",
+        "학습기록저장소"
+      ],
+      [
+        "JST 공유대학(원)",
+        "공유대학(원)"
+      ],
+      [
+        "구축",
+        "설치",
+        "도입"
+      ]
+    ],
+    "doc_id": "20240903688",
+    "question_type": "llm_1",
+    "source_type": "document",
+    "answer_format": "list",
+    "source_row_id": 20,
+    "project_name": "JST 공유대학(원) xAPI기반 LRS시스템 구축",
+    "organization": "전북대학교",
+    "file_name": "전북대학교_JST 공유대학(원) xAPI기반 LRS시스템 구축.hwp",
+    "file_type": "hwp"
+  },
+  {
+    "qid": "20240904268_fact_budget",
+    "question": "한국보건산업진흥원에서 발주한 '의료기기산업 종합정보시스템(정보관리기관) 기능개선 사업' 사업의 배정 예산은 얼마인가요?",
+    "reference": "50,000,000원 입니다.",
+    "required_keyword_groups": [
+      [
+        "50,000,000원",
+        "50000000원",
+        "5천만원"
+      ]
+    ],
+    "doc_id": "20240904268",
+    "question_type": "fact_budget",
+    "source_type": "metadata",
+    "answer_format": "money",
+    "source_row_id": 21,
+    "project_name": "의료기기산업 종합정보시스템(정보관리기관) 기능개선 사업",
+    "organization": "한국보건산업진흥원",
+    "file_name": "한국보건산업진흥원_의료기기산업 종합정보시스템(정보관리기관) 기능.hwp",
+    "file_type": "hwp"
+  },
+  {
+    "qid": "20240910050_llm_1",
+    "question": "2025 구미아시아육상경기선수권대회 종합정보시스템 구축 용역의 주요 목적이 무엇인가요?",
+    "reference": "대회 정보와 행사 정보를 제공해 대회를 홍보하고 성공적인 대회 운영을 지원하기 위함. 또한 대회 일정, 결과, 선수 등의 데이터를 신속하게 전달·관리하는 종합정보시스템 및 홈페이지 등을 구축·운영하는 것이 목적이다.",
+    "required_keyword_groups": [
+      [
+        "대회 홍보",
+        "홍보",
+        "프로모션"
+      ],
+      [
+        "성공적인 대회 운영",
+        "대회 운영",
+        "운영 지원"
+      ],
+      [
+        "일정",
+        "결과",
+        "선수",
+        "데이터 전달",
+        "데이터 관리"
+      ]
+    ],
+    "doc_id": "20240910050",
+    "question_type": "llm_1",
+    "source_type": "document",
+    "answer_format": "list",
+    "source_row_id": 17,
+    "project_name": "2025 구미아시아육상경기선수권대회 종합정보시스템 및 홈페이지 등 구축 용역",
+    "organization": "2025 구미 아시아육상경기선수권대회 조직위원회",
+    "file_name": "2025 구미 아시아육상경기선수권대회 조직위원회_2025 구미아시아육상경.hwp",
+    "file_type": "hwp"
+  },
+  {
+    "qid": "20240910050_llm_2",
+    "question": "제안요청서에 따르면 이 사업에서 수행해야 할 주요 개발·설계·운영 업무는 무엇인가요?",
+    "reference": "종합정보시스템 구축을 위한 요구분석 및 상세설계, 대회 정보화 시설(및 홈페이지) 구축, 대회 종합정보시스템 운영을 위한 소프트웨어(S/W) 개발 및 시스템 운영 관리 등이 주요 업무로 명시되어 있다.",
+    "required_keyword_groups": [
+      [
+        "요구분석",
+        "요구 분석"
+      ],
+      [
+        "상세설계",
+        "설계"
+      ],
+      [
+        "정보화 시설 구축",
+        "인프라 구축",
+        "홈페이지 구축",
+        "웹사이트 구축"
+      ],
+      [
+        "S/W 개발",
+        "소프트웨어 개발",
+        "시스템 개발"
+      ],
+      [
+        "운영",
+        "시스템 운영",
+        "운영 관리"
+      ]
+    ],
+    "doc_id": "20240910050",
+    "question_type": "llm_2",
+    "source_type": "document",
+    "answer_format": "list",
+    "source_row_id": 17,
+    "project_name": "2025 구미아시아육상경기선수권대회 종합정보시스템 및 홈페이지 등 구축 용역",
+    "organization": "2025 구미 아시아육상경기선수권대회 조직위원회",
+    "file_name": "2025 구미 아시아육상경기선수권대회 조직위원회_2025 구미아시아육상경.hwp",
+    "file_type": "hwp"
+  },
+  {
+    "qid": "20241030067_llm_1",
+    "question": "이 사업이 추진되는 배경과 해결하려는 문제는 무엇인가요?",
+    "reference": "연구 비목 및 세목 변경으로 인해 연계 전송 오류가 발생하고 있어 이를 해결하고, 행정절차를 간소화하기 위해 본 사업을 추진한다.",
+    "required_keyword_groups": [
+      [
+        "연구 비목 변경",
+        "세목 변경",
+        "연구 비목 및 세목 변경"
+      ],
+      [
+        "연계 전송 오류",
+        "전송 오류",
+        "연계 오류"
+      ],
+      [
+        "행정절차 간소화",
+        "행정 절차 간소화",
+        "절차 간소화"
+      ]
+    ],
+    "doc_id": "20241030067",
+    "question_type": "llm_1",
+    "source_type": "document",
+    "answer_format": "list",
+    "source_row_id": 73,
+    "project_name": "실시간통합연구비관리시스템(RCMS)  연계 모듈 변경 사업",
+    "organization": "광주과학기술원",
+    "file_name": "광주과학기술원_실시간통합연구비관리시스템(RCMS)  연계 모듈 변경 사업.hwp",
+    "file_type": "hwp"
+  },
+  {
+    "qid": "20241118572_fact_budget",
+    "question": "중앙선거관리위원회에서 발주한 '2025년도 행정정보시스템 위탁운영사업' 사업의 배정 예산은 얼마인가요?",
+    "reference": "102,253,417원 입니다.",
+    "required_keyword_groups": [
+      [
+        "102,253,417원",
+        "102253417원",
+        "1억2백2십5만원"
+      ]
+    ],
+    "doc_id": "20241118572",
+    "question_type": "fact_budget",
+    "source_type": "metadata",
+    "answer_format": "money",
+    "source_row_id": 51,
+    "project_name": "2025년도 행정정보시스템 위탁운영사업",
+    "organization": "중앙선거관리위원회",
+    "file_name": "중앙선거관리위원회_2025년도 행정정보시스템 위탁운영사업.hwp",
+    "file_type": "hwp"
+  },
+  {
+    "qid": "20241213403_llm_2",
+    "question": "이 사업의 목적과 기대효과는 무엇인지 요약해 주세요.",
+    "reference": "사업 목적은 학사 시스템의 업무 편리성 제고, 업무 효율성 극대화 및 사용자 편의성 증대입니다. 기대효과는 신속한 업무시스템 개발 및 서비스 제공, 업무 효율성 제고, 안정적인 시스템 운영 구축 및 사용자 만족도 제고입니다.",
+    "required_keyword_groups": [
+      [
+        "학사 시스템",
+        "학사시스템",
+        "학사 시스템 업무 편리성",
+        "업무 편리성 제고"
+      ],
+      [
+        "업무 효율성",
+        "업무 효율성 극대화",
+        "업무 효율성 제고"
+      ],
+      [
+        "사용자 편의성",
+        "사용자 편의성 증대",
+        "사용자 만족도"
+      ],
+      [
+        "신속한 업무시스템 개발",
+        "서비스 제공",
+        "안정적인 시스템 운영 구축"
+      ]
+    ],
+    "doc_id": "20241213403",
+    "question_type": "llm_2",
+    "source_type": "document",
+    "answer_format": "list",
+    "source_row_id": 38,
+    "project_name": "학사시스템 기능개선 사업",
+    "organization": "광주과학기술원",
+    "file_name": "광주과학기술원_학사시스템 기능개선 사업.hwp",
+    "file_type": "hwp"
+  },
+  {
+    "qid": "20241217596_llm_2",
+    "question": "온라인평가 체계 구축으로 기대되는 주요 효과는 무엇인가요?",
+    "reference": "기대효과는 평가자료 전산화로 정보 유출 방지, 사업관리시스템(PMS) 신뢰도 강화, 행정업무 효율성 강화(행정처리 간소화), 그리고 평가위원 선정의 투명성 극대화 등입니다.",
+    "required_keyword_groups": [
+      [
+        "평가자료 전산화",
+        "전산화",
+        "자료 전산화"
+      ],
+      [
+        "정보 유출 방지",
+        "유출 방지",
+        "정보보호"
+      ],
+      [
+        "사업관리시스템 신뢰도 강화",
+        "PMS 신뢰도 강화",
+        "시스템 신뢰도"
+      ],
+      [
+        "행정업무 효율성 강화",
+        "행정처리 간소화",
+        "업무처리 효율성"
+      ],
+      [
+        "평가위원 선정 투명성",
+        "평가위원 투명성",
+        "선정 투명성",
+        "투명성 극대화"
+      ]
+    ],
+    "doc_id": "20241217596",
+    "question_type": "llm_2",
+    "source_type": "document",
+    "answer_format": "list",
+    "source_row_id": 62,
+    "project_name": "한국로봇산업진흥원 사업관리시스템 온라인평가 체계 구축",
+    "organization": "한국로봇산업진흥원",
+    "file_name": "한국로봇산업진흥원_한국로봇산업진흥원 사업관리시스템 온라인평가 .hwp",
+    "file_type": "hwp"
+  },
+  {
+    "qid": "R25BK00601569_llm_1",
+    "question": "이 제안요청서의 주요 추진목표는 무엇인가요?",
+    "reference": "식량안보예측모델(FSFM) 마스터플랜 수립, 카토그램 데이터베이스 구축, FSFM 시스템 개발, 전문가 파견 및 역량강화 등이다.",
+    "required_keyword_groups": [
+      [
+        "FSFM",
+        "식량안보예측모델",
+        "식량안보 예측모델"
+      ],
+      [
+        "마스터플랜",
+        "마스터 플랜",
+        "계획 수립"
+      ],
+      [
+        "카토그램 데이터베이스",
+        "카토그램 DB",
+        "카토그램"
+      ],
+      [
+        "FSFM 시스템 개발",
+        "시스템 개발",
+        "FSFM 개발"
+      ],
+      [
+        "전문가 파견",
+        "전문가派遣",
+        "전문가 파견 및 역량강화"
+      ],
+      [
+        "역량강화",
+        "인력강화",
+        "capacity building"
+      ]
+    ],
+    "doc_id": "R25BK00601569",
+    "question_type": "llm_1",
+    "source_type": "document",
+    "answer_format": "list",
+    "source_row_id": 25,
+    "project_name": "아세안+3 식량안보정보시스템(AFSIS) 3단계 협력(캄보디아)사업 PMC 용역",
+    "organization": "한국농어촌공사",
+    "file_name": "한국농어촌공사_아세안+3 식량안보정보시스템(AFSIS) 3단계 협력(캄보디아.hwp",
+    "file_type": "hwp"
+  }
+]
