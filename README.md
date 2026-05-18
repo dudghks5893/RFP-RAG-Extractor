@@ -69,59 +69,124 @@
 
 ## 프로젝트 구조
 ```
-RFP-RAG-Extractor/
+RFP-RAG-Extractor/                         # 기업/정부 RFP 문서 요약·질의응답 RAG 시스템 프로젝트 루트
 │
-├── data/                      # 데이터 저장소 (Git에 올라가지 않도록 .gitignore 처리 필수)
-│   ├── raw/                   # 원본 데이터 (100개의 HWP, PDF 파일 및 data_list.csv)
-│   ├── processed/             # 전처리된 텍스트, 분할된 청크 데이터 등
-│   └── vector_db/             # 로컬에 저장되는 Vector DB 파일 (ChromaDB, FAISS 등 사용 시)
+├── configs/                               # 실험/실행 설정 파일 모음
+│   └── baseline_rag.yaml                  # 베이스라인 RAG 실행 설정: 경로, 모델명, top_k, batch_size, 평가 샘플 등
 │
-├── notebooks/                 # 팀원별/기능별 실험용 Jupyter Notebook
-│   ├── member1/               # 팀원 각자의 실험 공간 (Git 충돌 방지용)
-│   ├── member2/
-│   ├── 01_data_eda.ipynb      # 메타데이터 분석 및 데이터 탐색
-│   ├── 02_pdf_hwp_parsing.ipynb # 문서 파싱 실험
-│   ├── 03_chunking_exp.ipynb  # 청킹 전략 실험
-│   ├── 04_scenario_b_api.ipynb# 시나리오 B (LLM API 기반) 실험
-│   └── 05_scenario_a_loc.ipynb# 시나리오 A (로컬/클라우드 직접 구축) 실험
-│
-├── src/                       # 핵심 파이썬 모듈 (Notebook에서 import 하여 사용)
-│   ├── __init__.py
-│   ├── data_loader/           # 데이터 불러오기 및 파싱
-│   │   ├── __init__.py
-│   │   ├── pdf_parser.py      # PDF 추출 로직 (PyMuPDF, pdfplumber 등)
-│   │   └── hwp_parser.py      # HWP 추출 로직 (hwp5txt, OLE 파싱 등)
+├── data/                                  # 데이터 저장소, Git 관리 제외 권장
+│   ├── raw/                               # 원본 데이터 저장 위치
+│   │   ├── data_list.csv                  # 메타데이터 CSV: 공고번호, 사업명, 발주기관, 파일명, 예산 등
+│   │   ├── *.hwp                          # 원본 HWP RFP 문서
+│   │   ├── *.pdf                          # 원본 PDF RFP 문서
+│   │   └── *.docx                         # 원본 DOCX RFP 문서
 │   │
-│   ├── chunking/              # 문서 청킹 로직
-│   │   ├── __init__.py
-│   │   └── splitter.py        # RecursiveCharacter, Semantic 분할, 중첩(Overlap) 등
+│   ├── processed/                         # 전처리 및 평가 관련 중간 산출물
+│   │   ├── extracted/                     # 원본 파일에서 직접 추출한 raw text 저장 위치
+│   │   │   └── <doc_id>.txt               # 문서별 추출 원문 텍스트
+│   │   │
+│   │   ├── cleaned/                       # 정제 완료 텍스트 저장 위치
+│   │   │   └── <doc_id>.txt               # 문서별 정제 텍스트
+│   │   │
+│   │   └── eval/                          # 평가 데이터셋 및 RAG 실행 결과 저장 위치
+│   │       ├── eval_dataset.json       # 최종 평가 데이터셋
+│   │       ├── eval_dataset_sample_20.json # 실제 빠른 평가용 샘플 평가셋
+│   │       ├── rag_outputs_baseline_section_sample_20.json        # RAG 응답 원본 결과
+│   │       └── rag_outputs_baseline_section_sample_20_scored.json # keyword score 부착 결과
 │   │
-│   ├── retrieval/             # 검색 및 Vector DB 관련 로직
-│   │   ├── __init__.py
-│   │   ├── vector_store.py    # DB 연결, 임베딩, 데이터 적재
-│   │   └── searcher.py        # 메타데이터 필터링, MMR, Hybrid Search, Re-ranking 로직
+│   ├── chunks/                            # 청킹 결과 저장 위치
+│   │   └── section/                       # 목차/섹션 기반 청킹 결과
+│   │       └── section_chunks.jsonl       # RAG 인덱싱에 사용할 최종 청크 파일
 │   │
-│   ├── generation/            # 답변 생성 및 LLM 연결
-│   │   ├── __init__.py
-│   │   ├── prompts.py         # 프롬프트 템플릿 관리 (RAG 컨텍스트 반영 로직)
-│   │   └── llm_client.py      # 시나리오 A/B에 따른 LLM 호출 래퍼 함수
+│   └── vector_db/                         # 로컬 벡터 DB 저장 위치
+│       └── baseline_section_kure_faiss/   # section chunk + embedding +  Vector DB 인덱스
+│           ├── index.faiss                # 벡터 인덱스 파일
+│           ├── chunks.pkl                 # 벡터 DB row와 매칭되는 청크 메타데이터/본문
+│           └── config.json                # 인덱스 생성 당시의 config snapshot
+│
+├── logs/                                  # 실행 로그 저장 위치
+│   ├── extract_clean_chunk_log.csv        # 원본 파일 추출/정제/청킹 처리 로그
+│   └── run_rag_eval.log                   # 선택: RAG 평가 실행 로그 저장용
+│
+├── notebooks/                             # 실험용 Jupyter Notebook 공간
+│   ├── 01_extract_clean_chunk.ipynb       # 원본 파일 추출, 정제, 청킹 실험용 노트북
+│   └── 02_baseline_rag_eval.ipynb         # 벡터 DB 구축, RAG 실행, 평가 실험용 노트북
+│
+├── reports/                               # 평가 리포트 및 분석 결과 저장 위치
+│   └── evaluation/                        # RAG 평가 결과 모음
+│       ├── baseline_section...sample20_metrics.json              # 전체 평가 지표
+│       ├── baseline_section...sample20_by_question_type.json     # question_type별 평가 결과
+│       ├── baseline_section...sample20_by_source_type.json       # source_type별 평가 결과
+│       ├── baseline_section...sample20_by_answer_format.json     # answer_format별 평가 결과
+│       ├── baseline_section...sample20_by_file_type.json         # file_type별 평가 결과
+│       ├── baseline_section...sample20_retrieval_failures.csv    # 검색 실패 케이스
+│       ├── baseline_section...sample20_keyword_failures.csv      # 키워드 정답요소 누락 케이스
+│       ├── baseline_section...ample20_summary.csv                # 사람이 보기 쉬운 평가 요약표
+│       └── baseline_section...sample20_experiment_summary.json   # 실험 설정+결과 요약
+│
+├── scripts/                               # 터미널에서 실행하는 진입점 스크립트
+│   ├── check_project_modules.py           # 전체 모듈 import, config, 주요 경로 존재 여부 점검
+│   ├── run_extract_chunk.py               # 원본 PDF/HWP/DOCX 추출·정제·청킹 파이프라인 실행
+│   └── run_rag_eval.py                    # YAML config 기반 RAG 평가 파이프라인 실행
+│
+├── src/                                   # 재사용 가능한 핵심 Python 모듈
+│   ├── __init__.py                        # src 패키지 인식용 파일
 │   │
-│   └── evaluation/            # 성능 평가 로직
-│       ├── __init__.py
-│       ├── metrics.py         # 정량적/정성적 평가지표 계산 로직
-│       └── test_cases.py      # 제공된 질문 세트 테스트 자동화 로직
+│   ├── extractors/                        # 원본 문서 포맷별 텍스트 추출 모듈
+│   │   ├── __init__.py                    # 확장자별 추출 함수 import 및 분기 제공
+│   │   ├── pdf_extractor.py               # PDF 텍스트 추출, PyMuPDF 기반
+│   │   ├── hwp_extractor.py               # HWP 텍스트 추출, olefile 기반
+│   │   └── docx_extractor.py              # DOCX 텍스트 추출, python-docx 기반
+│   │
+│   ├── chunking/                          # 청킹 전략 관련 모듈
+│   │   ├── __init__.py                    # chunking 패키지 인식용
+│   │   ├── outline_detector.py            # 제목/목차 후보 라인 탐지 로직
+│   │   └── section_chunker.py             # 제목/섹션 기반 청크 생성 로직
+│   │
+│   ├── utils/                             # 공통 유틸리티 함수 모음
+│   │   ├── __init__.py                    # utils 패키지 인식용
+│   │   ├── config_utils.py                # YAML config 로드, 경로 해석, config snapshot 저장/비교
+│   │   ├── file_utils.py                  # JSONL 저장/로드 등 파일 입출력 유틸
+│   │   ├── path_utils.py                  # 프로젝트 루트 탐색 함수
+│   │   ├── progress_utils.py              # tqdm 대체용 print 기반 진행률 로거
+│   │   ├── text_cleaner.py                # 유니코드, 제어문자, 공백, 줄바꿈 등 텍스트 정제 함수
+│   │   ├── eval_dataset_utils.py          # 평가 데이터셋 로드, 저장, 균형 샘플링 함수
+│   │   ├── seed.py                        # random, numpy, torch seed 고정 함수
+│   │   └── device.py                      # CUDA, MPS, CPU device 탐지 함수
+│   │
+│   ├── embeddings/                        # 임베딩 모델 관련 모듈
+│   │   ├── __init__.py                    # EmbeddingModel import 제공
+│   │   └── embedding_model.py             # SentenceTransformer 로드, 문서/쿼리 임베딩 생성
+│   │
+│   ├── vectorstores/                      # Vector DB 저장/로드/검색 모듈
+│   │   ├── __init__.py                    # FAISSVectorStore import 제공
+│   │   └── faiss_store.py                 # FAISS 인덱스 생성, 저장, 로드, 검색, config 호환성 확인
+│   │
+│   ├── retrieval/                         # 검색 단계 모듈
+│   │   ├── __init__.py                    # RAGRetriever import 제공
+│   │   └── retriever.py                   # query embedding + FAISS search + retrieved_ids/context 추출
+│   │
+│   ├── generation/                        # LLM 프롬프트 및 답변 생성 모듈
+│   │   ├── __init__.py                    # prompt 함수와 LLMGenerator import 제공
+│   │   ├── prompts.py                     # RFP 전용 system prompt, context formatting, chat messages 생성
+│   │   └── llm_generator.py               # llm tokenizer/model 로드, 답변 생성, token/latency 기록
+│   │
+│   ├── evaluation/                        # RAG 성능 평가 모듈
+│   │   ├── __init__.py                    # evaluation 패키지 인식용
+│   │   └── rag_evaluator.py               # retrieval, generation, keyword, latency/cost 평가 및 실패 케이스 저장
+│   │
+│   └── pipeline/                          # 전체 실행 파이프라인 모듈
+│       ├── __init__.py                    # ExtractChunkPipeline, RAGEvalPipeline import 제공
+│       ├── extract_chunk_pipeline.py      # 원본 파일 직접 추출→정제→목차 기반 청킹→section_chunks 저장
+│       └── rag_eval_pipeline.py           # 청크 로드→FAISS 구축/로드→RAG 실행→평가→결과 저장
 │
-├── configs/                   # 환경 설정 파일 (청크 사이즈, k값, 모델 파라미터 등)
-│   ├── config.yaml            # 하이퍼파라미터 및 설정값 (chunk_size, top_k, temperature 등)
-│   └── prompt_templates.json  # 시스템 프롬프트 등
-│
-├── app/                       # (선택) 최종 결과물 데모용 폴더
-│   └── main.py                # Streamlit 또는 Gradio를 이용한 챗봇 UI
-│
-├── .env                       # API 키, DB 비밀번호 등 (절대 Git에 올리지 않음!)
-├── .gitignore                 # 무시할 파일 목록 (data폴더, .env, __pycache__ 등)
-├── requirements.txt           # 프로젝트 의존성 패키지 목록
-└── README.md                  # 프로젝트 설명, 팀원 역할, 실행 방법 등
+├── .env                                   # API 키, 환경변수 등 민감 정보, Git 제외
+├── .gitignore                             # data, vector_db, .env, __pycache__ 등 Git 제외 설정
+├── requirements-mac.txt                   # 프로젝트 의존성 패키지 목록
+├── requirements-win.txt                   # 프로젝트 의존성 패키지 목록
+├── requirements-jupiter.txt               # 프로젝트 의존성 패키지 목록
+├── requirements-common.txt                # 프로젝트 의존성 패키지 목록
+└── README.md                              # 프로젝트 설명, 설치 방법, 실행 방법, 실험 관리 문서
 ```
 
 
