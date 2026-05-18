@@ -1,0 +1,145 @@
+# configs/baseline_rag.yaml
+#
+# Baseline RAG 실험 설정 파일입니다.
+# Notebook 실험에서는 직접 변수를 선언해서 사용하고,
+# src/pipeline 기반 실행에서는 이 YAML 파일을 읽어서 사용합니다.
+
+extract:
+  # 원본 파일과 data_list.csv가 있는 디렉토리
+  raw_dir: data/raw
+
+  # 메타데이터 CSV
+  data_list_path: data/raw/data_list.csv
+
+  # 추출 원문 txt 저장 위치
+  extracted_dir: data/processed/extracted
+
+  # 정제 txt 저장 위치
+  cleaned_dir: data/processed/cleaned
+
+  # 청킹 결과 저장 경로
+  output_chunk_path: data/chunks/section/section_chunks.jsonl
+
+  # 처리 로그 저장 경로
+  process_log_path: logs/extract_clean_chunk_log.csv
+
+  # data_list.csv 컬럼명
+  columns:
+    doc_id: 공고 번호
+    file_name: 파일명
+    file_type: 파일형식
+    project_name: 사업명
+    organization: 발주 기관
+
+  # 청킹 설정
+  chunking:
+    max_chars: 3000
+    overlap_chars: 300
+    min_chars: 100
+
+  # true이면 기존 section_chunks.jsonl이 있어도 다시 생성
+  force_rebuild_chunks: true
+
+experiment:
+  # 실험 이름은 결과 파일명, vector db 저장 폴더명, report 파일명 등에 사용됩니다.
+  name: baseline_section_kure_qwen
+
+  # 실험 설명입니다. 나중에 결과 비교할 때 도움이 됩니다.
+  description: section chunking + KURE embedding + FAISS + Qwen2.5-1.5B-Instruct
+
+  # 샘플링, 재현성 확보를 위한 random seed입니다.
+  random_seed: 42
+
+
+paths:
+  # 01_extract_clean_chunk.ipynb 또는 추출/청킹 파이프라인에서 생성한 청크 파일입니다.
+  chunk_path: data/chunks/section/section_chunks.jsonl
+
+  # 전체 평가 데이터셋입니다.
+  eval_dataset_path: data/processed/eval/eval_dataset.json
+
+  # 실제 빠른 평가에 사용할 샘플 평가셋입니다.
+  eval_sample_path: data/processed/eval/eval_dataset_sample_20.json
+
+  # FAISS 인덱스와 청크 메타데이터를 저장할 디렉토리입니다.
+  vector_db_dir: data/vector_db/baseline_section_kure_faiss
+
+  # RAG 실행 결과 저장 경로입니다.
+  rag_output_path: data/processed/eval/rag_outputs_baseline_section_sample_20.json
+
+  # keyword score가 부착된 RAG 실행 결과 저장 경로입니다.
+  rag_output_scored_path: data/processed/eval/rag_outputs_baseline_section_sample_20_scored.json
+
+  # 평가 리포트 저장 디렉토리입니다.
+  report_dir: reports/evaluation
+
+
+chunking:
+  # 현재는 목차/섹션 단위 청킹 결과를 사용합니다.
+  strategy: section
+
+
+embedding:
+  # 베이스라인 임베딩 모델입니다.
+  model_name: nlpai-lab/KURE-v1
+
+  # 임베딩 배치 크기입니다.
+  # GPU 메모리가 부족하면 16으로 낮추고, 여유가 있으면 64로 올릴 수 있습니다.
+  batch_size: 32
+
+  # cosine similarity처럼 사용하기 위해 임베딩을 normalize합니다.
+  normalize_embeddings: true
+
+  # true이면 기존 벡터 DB (ex:FAISS) 인덱스가 있어도 새로 생성합니다.
+  # 처음 실행하거나 section_chunks.jsonl / embedding model이 바뀌면 true로 설정하세요.
+  # 이미 저장된 벡터 DB (ex:FAISS)를 재사용하려면 false로 바꾸면 됩니다.
+  force_rebuild_index: True
+
+  # 선택값: null이면 SentenceTransformer가 자동 device 선택
+  # OOM이 자주 나면 "cpu"로 고정 가능
+  device: null
+
+  # FAISS 생성 후 GPU 임베딩 모델을 내리고 CPU로 다시 로드할지 여부
+  reload_query_embedder_on_cpu: true
+
+vector_db:
+  # 현재는 FAISS를 사용합니다.
+  type: faiss
+
+  # FAISS 인덱스 파일명입니다.
+  index_file: index.faiss
+
+  # FAISS row index와 매칭되는 청크 메타데이터 파일입니다.
+  chunk_meta_file: chunks.pkl
+
+  # FAISS 생성 당시의 config snapshot 파일입니다.
+  config_file: config.json
+
+
+retrieval:
+  # 검색할 top-k 청크 수입니다.
+  top_k: 5
+
+
+llm:
+  # 베이스라인 LLM 모델입니다.
+  model_name: Qwen/Qwen2.5-1.5B-Instruct
+
+  # 생성 최대 토큰 수입니다.
+  max_new_tokens: 512
+
+  # deterministic generation을 위해 do_sample=false일 때 temperature는 사용하지 않습니다.
+  temperature: 0.0
+  do_sample: false
+
+  # Hugging Face 모델 로드 시 필요한 경우 true로 둡니다.
+  trust_remote_code: true
+
+
+evaluation:
+  # 전체 평가셋 중 실제 자동 평가에 사용할 문항 수입니다.
+  sample_size: 20
+
+  # keyword_group_recall이 이 값보다 낮으면 실패 케이스로 봅니다.
+  # 1.0이면 required keyword group을 하나라도 놓친 문항을 실패로 분류합니다.
+  keyword_failure_threshold: 1.0
