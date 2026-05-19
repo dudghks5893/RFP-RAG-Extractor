@@ -12,6 +12,36 @@
 
 4. Vector-DB 수동제거
     python scripts/run_rag_eval.py --config configs/baseline_rag.yaml --delete-vector-db
+
+디스크 정리 스크립트
+1. 삭제 대상만 확인
+python scripts/run_disk_cleanup.py
+
+2. 삭제 대상 삭제 진행
+python scripts/run_disk_cleanup.py --apply
+
+3. apt 캐시까지 같이 정리
+python scripts/run_disk_cleanup.py --apply --apt
+
+4. 임베딩/벡터DB까지 삭제하고 싶을 때
+python scripts/run_disk_cleanup.py --apply --remove-embeddings --remove-vector-db
+
+5. 평가 산출물까지 삭제하고 싶을 때
+python scripts/run_disk_cleanup.py --apply --remove-eval-results
+
+디스크 정리 가이드
+# 1. 프로젝트 루트로 이동
+cd /home/user1/RFP-RAG-Extractor
+
+# 2. 삭제 대상 먼저 확인
+python scripts/run_disk_cleanup.py
+
+# 3. 문제 없으면 실제 삭제
+python scripts/run_disk_cleanup.py --apply
+
+# 4. 디스크 확인
+df -h
+
 """
 
 """
