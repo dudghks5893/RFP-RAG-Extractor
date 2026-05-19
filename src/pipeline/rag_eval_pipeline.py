@@ -24,6 +24,8 @@ from typing import Dict, Any, List, Optional
 import time
 import gc
 
+import json
+import hashlib
 import pandas as pd
 import torch
 
@@ -177,6 +179,7 @@ class RAGEvalPipeline:
         self.paths["keyword_failure_path"] = report_dir / f"{experiment_name}_sample{sample_size}_keyword_failures.csv"
         self.paths["summary_csv_path"] = report_dir / f"{experiment_name}_sample{sample_size}_summary.csv"
         self.paths["experiment_summary_path"] = report_dir / f"{experiment_name}_sample{sample_size}_experiment_summary.json"
+        self.paths["chunk_fingerprint_path"] = self.paths["vector_db_dir"] / "chunk_fingerprint.json"
 
     def print_summary(self) -> None:
         """
@@ -379,6 +382,134 @@ class RAGEvalPipeline:
         return df
 
     # ---------------------------------------------------------
+    # Chunk fingerprint
+    # ---------------------------------------------------------
+    def compute_chunk_fingerprint(self) -> Dict[str, Any]:
+        """
+        현재 standard_chunks의 내용을 기반으로 fingerprint를 계산합니다.
+
+        목적:
+        - section_chunks.jsonl의 경로가 같아도 내용이 바뀌면 감지
+        - 청크 순서, chunk_id, doc_id, text가 바뀌면 vector DB 재생성
+        """
+        if not self.standard_chunks:
+            raise RuntimeError(
+                "standard_chunks가 비어 있습니다. "
+                "load_chunks()와 standardize_chunks()를 먼저 호출하세요."
+            )
+
+        hasher = hashlib.sha256()
+
+        for idx, chunk in enumerate(self.standard_chunks):
+            record = {
+                "order": idx,
+                "chunk_id": str(chunk.get("chunk_id", "")),
+                "doc_id": str(chunk.get("doc_id", "")),
+                "text": str(chunk.get("text", "")),
+                "file_type": str(chunk.get("file_type", "")),
+                "chunking_strategy": str(
+                    chunk.get("chunking_strategy", chunk.get("chunking_method", ""))
+                ),
+            }
+
+            encoded = json.dumps(
+                record,
+                ensure_ascii=False,
+                sort_keys=True,
+            ).encode("utf-8")
+
+            hasher.update(encoded)
+            hasher.update(b"\n")
+
+        fingerprint = {
+            "chunk_count": len(self.standard_chunks),
+            "chunk_content_sha256": hasher.hexdigest(),
+            "chunk_path": str(self.paths["chunk_path"]),
+        }
+
+        return fingerprint
+
+    def load_saved_chunk_fingerprint(self) -> Optional[Dict[str, Any]]:
+        """
+        기존 vector DB와 함께 저장된 chunk fingerprint를 로드합니다.
+        """
+        fingerprint_path = self.paths["chunk_fingerprint_path"]
+
+        if not fingerprint_path.exists():
+            return None
+
+        with open(fingerprint_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def save_chunk_fingerprint(self, fingerprint: Dict[str, Any]) -> None:
+        """
+        새로 생성한 vector DB에 대응되는 chunk fingerprint를 저장합니다.
+        """
+        fingerprint_path = self.paths["chunk_fingerprint_path"]
+        fingerprint_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(fingerprint_path, "w", encoding="utf-8") as f:
+            json.dump(
+                fingerprint,
+                f,
+                ensure_ascii=False,
+                indent=2,
+            )
+
+        print("chunk fingerprint 저장:", fingerprint_path)
+
+    def should_rebuild_by_chunk_fingerprint(self) -> tuple[bool, List[str]]:
+        """
+        현재 청크 fingerprint와 저장된 fingerprint를 비교해서
+        vector DB 재생성 여부를 판단합니다.
+        """
+        current_fingerprint = self.compute_chunk_fingerprint()
+        saved_fingerprint = self.load_saved_chunk_fingerprint()
+
+        reasons = []
+
+        if saved_fingerprint is None:
+            reasons.append("저장된 chunk fingerprint가 없음")
+            return True, reasons
+
+        if saved_fingerprint.get("chunk_count") != current_fingerprint.get("chunk_count"):
+            reasons.append(
+                "chunk_count 변경: "
+                f"{saved_fingerprint.get('chunk_count')} -> {current_fingerprint.get('chunk_count')}"
+            )
+
+        if saved_fingerprint.get("chunk_content_sha256") != current_fingerprint.get("chunk_content_sha256"):
+            reasons.append("chunk_content_sha256 변경")
+
+        if saved_fingerprint.get("chunk_path") != current_fingerprint.get("chunk_path"):
+            reasons.append(
+                "chunk_path 변경: "
+                f"{saved_fingerprint.get('chunk_path')} -> {current_fingerprint.get('chunk_path')}"
+            )
+
+        return len(reasons) > 0, reasons
+
+    def clear_vector_db_files(self) -> None:
+        """
+        기존 FAISS vector DB 파일을 삭제합니다.
+        chunk 내용이 바뀌었을 때 오래된 인덱스와 metadata가 섞이는 것을 방지합니다.
+        """
+        vector_cfg = self.config["vector_db"]
+        vector_db_dir = self.paths["vector_db_dir"]
+
+        target_files = [
+            vector_db_dir / vector_cfg.get("index_file", "index.faiss"),
+            vector_db_dir / vector_cfg.get("chunk_meta_file", "chunks.pkl"),
+            vector_db_dir / vector_cfg.get("config_file", "config.json"),
+            self.paths["chunk_fingerprint_path"],
+        ]
+
+        for path in target_files:
+            if path.exists():
+                path.unlink()
+                print("기존 vector DB 파일 삭제:", path)
+
+    # ---------------------------------------------------------
     # Embedding / Vector Store / Retriever
     # ---------------------------------------------------------
     def load_embedder(self, device: Optional[str] = None):
@@ -450,13 +581,19 @@ class RAGEvalPipeline:
             )
     
         embedding_cfg = self.config["embedding"]
-    
-        force_rebuild = embedding_cfg.get("force_rebuild_index", False)
+
+        
+        config_force_rebuild = embedding_cfg.get("force_rebuild_index", False)
         reload_query_embedder_on_cpu = embedding_cfg.get(
             "reload_query_embedder_on_cpu",
             False,
         )
-    
+
+        # 청크 내용 fingerprint 비교
+        fingerprint_rebuild, fingerprint_reasons = self.should_rebuild_by_chunk_fingerprint()
+
+        force_rebuild = config_force_rebuild or fingerprint_rebuild
+
         rebuild, reasons = self.vector_store.should_rebuild(
             current_config=self.config,
             force_rebuild=force_rebuild,
@@ -466,6 +603,13 @@ class RAGEvalPipeline:
                 "paths.chunk_path",
             ],
         )
+
+        reasons = list(reasons) + fingerprint_reasons
+
+        if fingerprint_rebuild:
+            print("청크 내용 변경 감지. 기존 vector DB를 교체합니다.")
+            print("fingerprint reasons:", fingerprint_reasons)
+            self.clear_vector_db_files()
     
         if rebuild:
             print("FAISS 인덱스 새로 생성")
@@ -497,7 +641,11 @@ class RAGEvalPipeline:
             self.vector_store.save(
                 config_snapshot=self.config,
             )
-    
+            
+            # 4-1. 현재 청크 fingerprint 저장
+            current_fingerprint = self.compute_chunk_fingerprint()
+            self.save_chunk_fingerprint(current_fingerprint)
+            
             # 5. embeddings 배열은 저장 후 필요 없으므로 제거
             del embeddings
             gc.collect()

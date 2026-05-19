@@ -93,7 +93,7 @@ embedding:
   # true이면 기존 벡터 DB (ex:FAISS) 인덱스가 있어도 새로 생성합니다.
   # 처음 실행하거나 section_chunks.jsonl / embedding model이 바뀌면 true로 설정하세요.
   # 이미 저장된 벡터 DB (ex:FAISS)를 재사용하려면 false로 바꾸면 됩니다.
-  force_rebuild_index: True
+  force_rebuild_index: true
 
   # 선택값: null이면 SentenceTransformer가 자동 device 선택
   # OOM이 자주 나면 "cpu"로 고정 가능

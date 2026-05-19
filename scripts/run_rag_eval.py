@@ -1,5 +1,3 @@
-# scripts/run_rag_eval.py
-#
 # YAML config 기반 RAG 평가 파이프라인 실행 스크립트입니다.
 #
 # 사용 예:
@@ -29,16 +27,6 @@ from pathlib import Path
 def find_project_root_from_script(
     project_name: str = "RFP-RAG-Extractor",
 ) -> Path:
-    """
-    현재 스크립트 위치에서 상위 폴더를 탐색하며 프로젝트 루트를 찾습니다.
-
-    예:
-    현재 파일 위치:
-    RFP-RAG-Extractor/scripts/run_rag_eval.py
-
-    반환:
-    RFP-RAG-Extractor/
-    """
     current = Path(__file__).resolve()
 
     for path in [current, *current.parents]:
@@ -51,14 +39,6 @@ def find_project_root_from_script(
 
 
 def parse_args() -> argparse.Namespace:
-    """
-    커맨드라인 인자를 파싱합니다.
-
-    Returns
-    -------
-    argparse.Namespace
-        실행 인자 객체입니다.
-    """
     parser = argparse.ArgumentParser(
         description="Run RAG evaluation pipeline with YAML config."
     )
@@ -67,7 +47,7 @@ def parse_args() -> argparse.Namespace:
         "--config",
         type=str,
         default="configs/baseline_rag.yaml",
-        help="YAML config 파일 경로입니다. 프로젝트 루트 기준 상대 경로 또는 절대 경로를 사용할 수 있습니다.",
+        help="YAML config 파일 경로입니다.",
     )
 
     parser.add_argument(
@@ -80,21 +60,32 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--skip-cleanup",
         action="store_true",
-        help="실행 후 cleanup을 생략합니다. 디버깅 목적일 때만 사용하세요.",
+        help="pipeline.cleanup()을 생략합니다. 디버깅 목적일 때만 사용하세요.",
+    )
+
+    parser.add_argument(
+        "--skip-cache-cleanup",
+        action="store_true",
+        help="실행 캐시 폴더 삭제를 생략합니다. 디버깅 목적일 때만 사용하세요.",
+    )
+
+    parser.add_argument(
+        "--cache-root",
+        type=str,
+        default=".runtime_cache",
+        help="이번 실행 캐시를 저장할 루트 폴더입니다.",
+    )
+
+    parser.add_argument(
+        "--delete-vector-db",
+        action="store_true",
+        help="실행 후 FAISS vector_db_dir도 삭제합니다. 결과 파일만 남기고 싶을 때 사용하세요.",
     )
 
     return parser.parse_args()
 
 
 def main() -> int:
-    """
-    스크립트 메인 실행 함수입니다.
-
-    Returns
-    -------
-    int
-        정상 종료 시 0, 실패 시 1을 반환합니다.
-    """
     args = parse_args()
 
     project_root = find_project_root_from_script(args.project_name)
@@ -103,6 +94,21 @@ def main() -> int:
     if str(project_root) not in sys.path:
         sys.path.insert(0, str(project_root))
 
+    # 중요:
+    # RAGEvalPipeline import 전에 디스크 캐시 가드를 먼저 import하고 환경변수를 설정해야 합니다.
+    from src.utils.run_disk_guard import RunDiskGuard
+
+    disk_guard = RunDiskGuard(
+        project_root=project_root,
+        cache_root=args.cache_root,
+        verbose=True,
+    )
+
+    # HuggingFace / Torch / pip / temp 캐시 위치를 이번 실행 전용 폴더로 고정
+    disk_guard.setup_env()
+
+    # 중요:
+    # 캐시 환경변수 설정 후에 pipeline을 import합니다.
     from src.pipeline import RAGEvalPipeline
 
     pipeline = None
@@ -111,6 +117,7 @@ def main() -> int:
         print("===== Run RAG Evaluation Pipeline =====")
         print("project_root:", project_root)
         print("config:", args.config)
+        print("cache_root:", args.cache_root)
 
         pipeline = RAGEvalPipeline(
             config_path=args.config,
@@ -118,11 +125,23 @@ def main() -> int:
             project_name=args.project_name,
         )
 
+        # 결과 파일만 남기고 싶다면 vector DB도 삭제 대상으로 등록
+        # pipeline 생성 후 paths가 생기므로 여기에서 등록합니다.
+        if args.delete_vector_db:
+            disk_guard.add_delete_path(pipeline.paths["vector_db_dir"])
+
         results = pipeline.run()
 
         print("\n===== Pipeline Finished Successfully =====")
         print("metrics:")
         print(results.get("metrics"))
+
+        print("\n===== Saved Result Files =====")
+        print("rag_output_path:", pipeline.paths.get("rag_output_path"))
+        print("rag_output_scored_path:", pipeline.paths.get("rag_output_scored_path"))
+        print("summary_csv_path:", pipeline.paths.get("summary_csv_path"))
+        print("metrics_path:", pipeline.paths.get("metrics_path"))
+        print("experiment_summary_path:", pipeline.paths.get("experiment_summary_path"))
 
         return 0
 
@@ -136,11 +155,18 @@ def main() -> int:
 
     finally:
         if pipeline is not None and not args.skip_cleanup:
-            print("\n===== Cleanup =====")
+            print("\n===== Pipeline Cleanup =====")
             try:
                 pipeline.cleanup()
             except Exception as cleanup_error:
-                print("cleanup 중 오류 발생:", repr(cleanup_error))
+                print("pipeline cleanup 중 오류 발생:", repr(cleanup_error))
+
+        if not args.skip_cache_cleanup:
+            print("\n===== Disk Cache Cleanup =====")
+            try:
+                disk_guard.cleanup()
+            except Exception as cache_cleanup_error:
+                print("disk cache cleanup 중 오류 발생:", repr(cache_cleanup_error))
 
 
 if __name__ == "__main__":

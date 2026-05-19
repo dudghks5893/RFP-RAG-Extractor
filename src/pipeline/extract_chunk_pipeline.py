@@ -37,15 +37,20 @@ from src.extractors import extract_text_by_file_type
 from src.utils.text_cleaner import clean_extracted_text
 
 # 기우님의 청킹 방식
-from src.chunking.toc_chunker import (
-    preprocess_text_for_toc_chunking,
-    create_toc_based_chunks as create_chunks,
+# from src.chunking.toc_chunker import (
+#     preprocess_text_for_toc_chunking,
+#     create_toc_based_chunks as create_chunks,
+# )
+
+# 성택님의 청킹 방식
+from src.chunking.subheading_chunker import (
+    create_section_chunks as create_chunks
 )
 
 # 기존 베이스라인 청킹 방식
-from src.chunking.section_chunker import (
-    create_section_chunks as create_chunks,
-)
+# from src.chunking.section_chunker import (
+#    create_section_chunks as create_chunks
+#)
 
 class ExtractChunkPipeline:
     """
@@ -382,11 +387,14 @@ class ExtractChunkPipeline:
             extracted = extract_text_by_file_type(file_path)
             raw_text = extracted.get("text", "") or ""
 
-            # 2. 공통 텍스트 정제
-            base_clean_text = clean_extracted_text(raw_text)
+            # 2. 텍스트 정제
+            # base_clean_text = clean_extracted_text(raw_text)
 
             # 3. 목차 기반 청킹용 추가 전처리
-            clean_text = preprocess_text_for_toc_chunking(base_clean_text)
+            # clean_text = preprocess_text_for_toc_chunking(base_clean_text)
+
+            # 기본 베이스 라인 적용 시 위 2개 주석하고 아래 코드 사용.
+            clean_text = clean_extracted_text(raw_text)
 
             # 4. 추출/정제 텍스트 저장
             extracted_path = self.paths["extracted_dir"] / f"{doc_id}.txt"
@@ -411,7 +419,15 @@ class ExtractChunkPipeline:
                 min_chars=chunking_cfg.get("min_chars", 100),
             )
 
-            section_count = len(set(chunk["section_id"] for chunk in chunks))
+            # section_count = len(set(chunk["section_id"] for chunk in chunks))
+            section_count = len(set(
+                chunk.get("section_id")
+                or chunk.get("section_title")
+                or chunk.get("metadata", {}).get("section_id")
+                or chunk.get("metadata", {}).get("section_title")
+                or "unknown"
+                for chunk in chunks
+            ))
 
             self.process_logs.append({
                 "doc_id": doc_id,
