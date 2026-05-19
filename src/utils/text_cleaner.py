@@ -84,6 +84,29 @@ def normalize_common_symbols(text: str) -> str:
     return text
 
 
+def remove_broken_encoding_noise(text: str) -> str:
+    """
+    문서 변환/추출 과정에서 섞이는 깨진 인코딩성 한자 노이즈를 제거합니다.
+
+    예:
+    氠瑢
+    漠杳
+    氠瑢氠瑢漠杳
+
+    주의:
+    전체 한자 범위를 제거하지 않고, 실제로 관측된 노이즈 패턴만 제거합니다.
+    """
+    noise_patterns = [
+        "氠瑢",
+        "漠杳",
+    ]
+
+    for pattern in noise_patterns:
+        text = text.replace(pattern, " ")
+
+    return text
+
+
 def clean_extracted_text(text: str) -> str:
     """
     추출된 원시 텍스트에 대한 기본 정제 파이프라인입니다.
@@ -105,6 +128,7 @@ def clean_extracted_text(text: str) -> str:
     text = normalize_unicode(text)
     text = normalize_common_symbols(text)
     text = remove_control_chars(text)
+    text = remove_broken_encoding_noise(text)
     text = remove_toc_dots(text)
     text = normalize_whitespace(text)
 
