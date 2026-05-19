@@ -43,9 +43,9 @@ from src.chunking.toc_chunker import (
 )
 
 # 기존 베이스라인 청킹 방식
-from src.chunking.section_chunker import (
-    create_section_chunks as create_chunks,
-)
+# from src.chunking.section_chunker import (
+#     create_section_chunks as create_chunks,
+# )
 
 class ExtractChunkPipeline:
     """
