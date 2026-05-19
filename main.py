@@ -9,6 +9,9 @@
 
 3. RAG 구축 및 평가
    python scripts/run_rag_eval.py --config configs/baseline_rag.yaml
+
+4. Vector-DB 수동제거
+    python scripts/run_rag_eval.py --config configs/baseline_rag.yaml --delete-vector-db
 """
 
 """
