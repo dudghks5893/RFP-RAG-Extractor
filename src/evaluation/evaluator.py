@@ -1034,6 +1034,10 @@ class RAGEvaluator:
 
         자동 평가셋이 아닌 실제 사용 질의에 대한 수동 평가용입니다.
         """
+
+        output_csv = Path(output_csv)
+        output_csv.parent.mkdir(parents=True, exist_ok=True)
+        
         contexts = rag_result.get("retrieved_contexts", ["(참고 문서 없음)"])
         context_text = "\n\n".join(contexts) if isinstance(contexts, list) else str(contexts)
 
