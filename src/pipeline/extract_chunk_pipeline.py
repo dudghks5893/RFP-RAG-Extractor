@@ -43,14 +43,14 @@ from src.utils.text_cleaner import clean_extracted_text
 # )
 
 # 성택님의 청킹 방식
-# from src.chunking.subheading_chunker import (
-#    create_section_chunks as create_chunks
-#)
-
-# 기존 베이스라인 청킹 방식
- from src.chunking.section_chunker import (
+from src.chunking.subheading_chunker import (
     create_section_chunks as create_chunks
 )
+
+# 기존 베이스라인 청킹 방식
+# from src.chunking.section_chunker import (
+#    create_section_chunks as create_chunks
+#)
 
 class ExtractChunkPipeline:
     """

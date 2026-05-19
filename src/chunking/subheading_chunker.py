@@ -16,9 +16,7 @@ except ImportError:
 # ---------------------------------------------------------
 def normalize_text(text: str) -> str:
     """
-    section_chunker 내부에서 사용하는 최소 정규화 함수입니다.
-
-    주의:
+    - section_chunker 내부에서 사용하는 최소 정규화 함수입니다.
     - 강한 전처리는 src.utils.text_cleaner.preprocess_text_for_section_chunking에서 수행합니다.
     - 여기서는 줄바꿈/공백만 가볍게 정리합니다.
     """
