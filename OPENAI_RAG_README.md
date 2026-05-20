@@ -3,8 +3,6 @@
 이 문서는 기존 RFP 추출/정제/청킹 흐름은 그대로 사용하고, 마지막 RAG 구축 및 평가 단계만 OpenAI 모델과 여러 VectorDB 조합으로 실행하는 방법을 정리합니다.
 
 ## 실행방법 요약
-pip install -r requirements-openai-rag.txt
-
 1.open api key 입력 
  - .env를 통해서
  - read -s를 통해서
