@@ -1,0 +1,6 @@
+openai>=1.0.0
+faiss-cpu>=1.7.4
+chromadb>=0.5.0
+qdrant-client>=1.9.0
+supabase>=2.4.0
+
