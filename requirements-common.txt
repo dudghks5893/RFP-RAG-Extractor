@@ -36,3 +36,7 @@ tqdm
 ipykernel
 ipywidgets            # 주피터 위젯 코어 패키지
 widgetsnbextension    # 위젯 애니메이션 확장 플러그인
+
+#vector DB
+qdrant-client>=1.9.0
+supabase>=2.4.0

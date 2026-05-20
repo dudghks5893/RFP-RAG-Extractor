@@ -1,149 +1,401 @@
-# configs/baseline_rag.yaml
+# =========================================================
+# baseline_rag.yaml
 #
-# Baseline RAG 실험 설정 파일입니다.
-# Notebook 실험에서는 직접 변수를 선언해서 사용하고,
-# src/pipeline 기반 실행에서는 이 YAML 파일을 읽어서 사용합니다.
+# 목적:
+# - 기존 HF 기반 RAG 실험 유지
+# - OpenAI 기반 RAG 실험 추가
+# - FAISS / Chroma / Qdrant / Supabase 모두 실험 가능
+#
+# 사용 예시:
+#
+# 1) HF + FAISS
+#    embedding.provider = huggingface
+#    llm.provider = huggingface
+#    vector_db.type = faiss
+#
+# 2) OpenAI + FAISS
+#    embedding.provider = openai
+#    llm.provider = openai
+#    vector_db.type = faiss
+#
+# 3) OpenAI + Chroma
+#    vector_db.type = chroma
+#
+# 4) OpenAI + Qdrant
+#    vector_db.type = qdrant
+#
+# 5) OpenAI + Supabase
+#    vector_db.type = supabase
+#
+# =========================================================
+
+
+
+# =========================================================
+# 원본 데이터 추출 / 정제 / 청킹 설정
+# =========================================================
 
 extract:
-  # 원본 파일과 data_list.csv가 있는 디렉토리
+
+  # 원본 문서(pdf, hwp 등)가 저장된 폴더
   raw_dir: data/raw
 
-  # 메타데이터 CSV
+  # 문서 메타데이터 CSV
   data_list_path: data/raw/data_list.csv
 
-  # 추출 원문 txt 저장 위치
+  # 추출된 원문 txt 저장 폴더
   extracted_dir: data/processed/extracted
 
-  # 정제 txt 저장 위치
+  # 텍스트 정제(cleaning) 후 저장 폴더
   cleaned_dir: data/processed/cleaned
 
-  # 청킹 결과 저장 경로
+  # 최종 chunk jsonl 저장 경로
   output_chunk_path: data/chunks/section/section_chunks.jsonl
 
-  # 처리 로그 저장 경로
+  # 처리 로그 저장
   process_log_path: logs/extract_clean_chunk_log.csv
 
-  # data_list.csv 컬럼명
+
+  # data_list.csv 컬럼명 정의
   columns:
+
+    # 문서 ID
     doc_id: 공고 번호
+
+    # 파일명
     file_name: 파일명
+
+    # 파일 형식(pdf/hwp/docx 등)
     file_type: 파일형식
+
+    # 사업명
     project_name: 사업명
+
+    # 발주기관
     organization: 발주 기관
 
-  # 청킹 설정
+
+  # chunking 세부 설정
   chunking:
+
+    # 하나의 chunk 최대 글자 수
     max_chars: 3000
+
+    # chunk overlap 크기
     overlap_chars: 300
+
+    # 최소 chunk 길이
     min_chars: 100
 
-  # true이면 기존 section_chunks.jsonl이 있어도 다시 생성
+
+  # true면 기존 chunk 파일이 있어도 다시 생성
   force_rebuild_chunks: true
 
+# =========================================================
+# 실험 기본 정보
+# =========================================================
+
 experiment:
-  # 실험 이름은 결과 파일명, vector db 저장 폴더명, report 파일명 등에 사용됩니다.
-  name: baseline_section_kure_qwen
 
-  # 실험 설명입니다. 나중에 결과 비교할 때 도움이 됩니다.
-  description: section chunking + KURE embedding + FAISS + Qwen2.5-1.5B-Instruct
+  # 실험 이름
+  # 결과 파일명 및 벡터 DB 폴더명에 사용됨
+  name: baseline_multi_rag
 
-  # 샘플링, 재현성 확보를 위한 random seed입니다.
+  # 실험 설명
+  description: HF + OpenAI + Multi VectorDB RAG Experiment
+
+  # 랜덤 시드
   random_seed: 42
 
+# =========================================================
+# 전체 경로 설정
+# =========================================================
 
 paths:
-  # 01_extract_clean_chunk.ipynb 또는 추출/청킹 파이프라인에서 생성한 청크 파일입니다.
+
+  # 추출/청킹 파이프라인에서 생성한 청크 파일입니다.
   chunk_path: data/chunks/section/section_chunks.jsonl
 
-  # 전체 평가 데이터셋입니다.
+  # 전체 평가셋
   eval_dataset_path: data/processed/eval/eval_dataset.json
 
-  # 실제 빠른 평가에 사용할 샘플 평가셋입니다.
+  # 빠른 실험용 샘플 평가셋
   eval_sample_path: data/processed/eval/eval_dataset_sample_20.json
 
-  # FAISS 인덱스와 청크 메타데이터를 저장할 디렉토리입니다.
-  vector_db_dir: data/vector_db/baseline_section_kure_faiss
+  # vector DB 인덱스와 청크 메타데이터를 저장할 디렉토리입니다.
+  vector_db_dir: data/vector_db
 
-  # RAG 실행 결과 저장 경로입니다.
-  rag_output_path: data/processed/eval/rag_outputs_baseline_section_sample_20.json
+  # RAG 결과 저장
+  rag_output_path: data/processed/eval/rag_outputs.json
 
-  # keyword score가 부착된 RAG 실행 결과 저장 경로입니다.
-  rag_output_scored_path: data/processed/eval/rag_outputs_baseline_section_sample_20_scored.json
+  # 평가 점수 포함 결과 저장
+  rag_output_scored_path: data/processed/eval/rag_outputs_scored.json
 
-  # 평가 리포트 저장 디렉토리입니다.
+  # 리포트 저장 폴더
   report_dir: reports/evaluation
 
 
+
+# =========================================================
+# Chunking 전략
+# =========================================================
+
 chunking:
-  # 현재는 목차/섹션 단위 청킹 결과를 사용합니다.
+
+  # 현재:
+  # section = 목차/섹션 단위 chunking
   strategy: section
 
+# =========================================================
+# Embedding 설정
+# =========================================================
 
 embedding:
-  # 베이스라인 임베딩 모델입니다.
-  model_name: nlpai-lab/KURE-v1
 
-  # 임베딩 배치 크기입니다.
-  # GPU 메모리가 부족하면 16으로 낮추고, 여유가 있으면 64로 올릴 수 있습니다.
+  # -------------------------------------------------------
+  # embedding provider 선택
+  #
+  # 선택 가능:
+  # - huggingface
+  # - openai
+  # -------------------------------------------------------
+  provider: openai
+
+
+  # -------------------------------------------------------
+  # HuggingFace embedding 모델
+  #
+  # 사용 예:
+  # - nlpai-lab/KURE-v1
+  # - BAAI/bge-m3
+  # -------------------------------------------------------
+  hf_model_name: nlpai-lab/KURE-v1
+
+
+  # -------------------------------------------------------
+  # OpenAI embedding 모델
+  #
+  # 사용 예:
+  # - text-embedding-3-small
+  # - text-embedding-3-large
+  # -------------------------------------------------------
+  openai_model_name: text-embedding-3-small
+
+  # embedding batch size
   batch_size: 32
 
-  # cosine similarity처럼 사용하기 위해 임베딩을 normalize합니다.
+  # cosine similarity용 normalize
   normalize_embeddings: true
+
 
   # true이면 기존 벡터 DB (ex:FAISS) 인덱스가 있어도 새로 생성합니다.
   # 처음 실행하거나 section_chunks.jsonl / embedding model이 바뀌면 true로 설정하세요.
   # 이미 저장된 벡터 DB (ex:FAISS)를 재사용하려면 false로 바꾸면 됩니다.
   force_rebuild_index: false
 
+
   # 선택값: null이면 SentenceTransformer가 자동 device 선택
   # OOM이 자주 나면 "cpu"로 고정 가능
+  # null / cpu / cuda
   device: null
 
+
+  # GPU 메모리 절약 옵션
   # FAISS 생성 후 GPU 임베딩 모델을 내리고 CPU로 다시 로드할지 여부
   reload_query_embedder_on_cpu: true
 
+
+# =========================================================
+# Vector DB 설정
+# =========================================================
+
 vector_db:
-  # 현재는 FAISS를 사용합니다.
+
+  # 사용할 벡터 DB 선택
+  #
+  # 선택 가능:
+  # - faiss
+  # - chroma
+  # - qdrant
+  # - supabase
   type: faiss
 
-  # FAISS 인덱스 파일명입니다.
-  index_file: index.faiss
 
-  # FAISS row index와 매칭되는 청크 메타데이터 파일입니다.
-  chunk_meta_file: chunks.pkl
+  # -------------------------------------------------------
+  # Vector Store별 설정
+  # -------------------------------------------------------
+  stores:
 
-  # FAISS 생성 당시의 config snapshot 파일입니다.
-  config_file: config.json
 
+    # =====================================================
+    # FAISS
+    # =====================================================
+    faiss:
+
+      # 저장 폴더
+      persist_dir: data/vector_db/faiss_openai
+
+      # index 파일
+      index_file: index.faiss
+
+      # chunk metadata 파일
+      chunk_meta_file: chunks.pkl
+
+      # config snapshot 파일
+      config_file: config.json
+
+
+
+    # =====================================================
+    # Chroma
+    # =====================================================
+    chroma:
+
+      # 저장 폴더
+      persist_dir: data/vector_db/chroma_openai
+
+      # collection 이름
+      collection: rfp_openai_rag
+
+
+
+    # =====================================================
+    # Qdrant
+    # =====================================================
+    qdrant:
+
+      # 로컬 주소
+      #
+      # Colab에서는 localhost 사용 불가
+      # JupyterLab/Docker에서는 가능
+      url: http://localhost:6333
+
+      # API KEY 환경변수명
+      api_key_env: QDRANT_API_KEY
+
+      # collection 이름
+      collection: rfp_openai_rag
+
+
+
+    # =====================================================
+    # Supabase
+    # =====================================================
+    supabase:
+
+      # Supabase URL 환경변수
+      url_env: SUPABASE_URL
+
+      # Service Role Key 환경변수
+      key_env: SUPABASE_SERVICE_ROLE_KEY
+
+      # 저장 테이블명
+      table: rfp_chunks
+
+      # pgvector similarity function
+      match_function: match_rfp_chunks
+
+# =========================================================
+# Retrieval 설정
+# =========================================================
 
 retrieval:
-  # 검색할 top-k 청크 수입니다.
+
+  # 검색 chunk 개수(top-k)
   top_k: 5
 
 
+
+# =========================================================
+# LLM 설정
+# =========================================================
+
 llm:
-  # 베이스라인 LLM 모델입니다.
-  model_name: Qwen/Qwen2.5-1.5B-Instruct
 
-  # 생성 최대 토큰 수입니다.
-  max_new_tokens: 512
+  # -------------------------------------------------------
+  # 사용할 LLM provider
+  #
+  # 선택 가능:
+  # - huggingface
+  # - openai
+  # -------------------------------------------------------
+  provider: openai
 
-  # deterministic generation을 위해 do_sample=false일 때 temperature는 사용하지 않습니다.
+
+  # -------------------------------------------------------
+  # HuggingFace LLM 모델
+  #
+  # 사용 예:
+  # - Qwen/Qwen2.5-1.5B-Instruct
+  # - meta-llama/Llama-3.2-3B-Instruct
+  # -------------------------------------------------------
+  hf_model_name: Qwen/Qwen2.5-1.5B-Instruct
+
+
+  # -------------------------------------------------------
+  # OpenAI 모델
+  #
+  # 사용 예:
+  # - gpt-5-mini
+  # - gpt-5-nano
+  # -------------------------------------------------------
+  openai_model_name: gpt-5-mini
+
+
+  # fallback 모델
+  fallback_model_name: gpt-5-nano
+
+
+  # 생성 최대 토큰 수
+  max_output_tokens: 512
+
+
+  # temperature
   temperature: 0.0
+
+
+  # deterministic generation
   do_sample: false
 
-  # Hugging Face 모델 로드 시 필요한 경우 true로 둡니다.
+
+  # HF remote code 허용 여부
   trust_remote_code: true
 
+# =========================================================
+# OpenAI API 설정
+# =========================================================
+
+openai:
+
+  # OpenAI API Key 환경변수명
+  api_key_env: OPENAI_API_KEY
+
+  # embedding model
+  embedding_model: text-embedding-3-small
+
+  # 기본 GPT 모델
+  llm_model: gpt-5-mini
+
+  # fallback 모델
+  fallback_llm_model: gpt-5-nano
+
+
+# =========================================================
+# 평가 설정
+# =========================================================
 
 evaluation:
+
   # 전체 평가셋 중 실제 자동 평가에 사용할 문항 수입니다.
   sample_size: 20
 
   # keyword_group_recall이 이 값보다 낮으면 실패 케이스로 봅니다.
   # 1.0이면 required keyword group을 하나라도 놓친 문항을 실패로 분류합니다.
   keyword_failure_threshold: 1.0
-
+  
+# =========================================================
+# 사람 직접 평가 설정
+# =========================================================
 
 human_eval:
   # 팀원 평가
