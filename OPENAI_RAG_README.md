@@ -33,27 +33,15 @@
   - OpenAI embedding/LLM과 FAISS, Chroma, Qdrant, Supabase 설정을 포함합니다.
 - `src/pipeline/openai_rag_eval_pipeline.py`
   - OpenAI embedding/LLM, 4개 VectorDB, 기존 `RAGEvaluator`를 연결한 평가 파이프라인입니다.
-- `scripts/run_rag_eval.py`
+- `scripts/run_openai_rag_eval.py`
   - OpenAI 설정이면 `OpenAIRAGEvalPipeline`을 실행합니다.
   - `--matrix` 옵션으로 8개 실험을 한 번에 실행할 수 있습니다.
-- `scripts/run_extract_chunk.py`
-  - 기존 2단계 추출/정제/청킹 실행 스크립트입니다.
 - `scripts/check_openai_rag_modules.py`
   - OpenAI와 VectorDB 의존성, API key, 주요 경로를 점검합니다.
-- `requirements-openai-rag.txt`
-  - OpenAI RAG 실험에 필요한 추가 패키지 목록입니다.
 - 'src/pipeline/__init__.py'
   - from src.pipeline.openai_rag_eval_pipeline import OpenAIRAGEvalPipeline 추가 하였습니다.
 
-## 0. 설치
-
-프로젝트 루트에서 실행합니다.
-
-```bash
-pip install -r requirements-openai-rag.txt
-```
-
-
+`
 ## 1. OpenAI API Key 설정
 
 # 간단한 방법(대신 터미널 끝나면 사라짐)
@@ -135,7 +123,7 @@ logs/extract_clean_chunk_log.csv
 ```bash
 python scripts/run_openai_rag_eval.py --config configs/baseline_rag.yaml --llm-model gpt-5-mini --vector-db qdrant
 python scripts/run_openai_rag_eval.py --config configs/baseline_rag.yaml --llm-model gpt-5-mini --vector-db supabase
-python scripts/run_openai_rag_eval.py--config configs/baseline_rag.yaml --llm-model gpt-5-mini --vector-db faiss
+python scripts/run_openai_rag_eval.py --config configs/baseline_rag.yaml --llm-model gpt-5-mini --vector-db faiss
 python scripts/run_openai_rag_eval.py --config configs/baseline_rag.yaml --llm-model gpt-5-mini --vector-db chroma
 
 python scripts/run_openai_rag_eval.py --config configs/baseline_rag.yaml --llm-model gpt-5-nano --vector-db qdrant
@@ -190,7 +178,7 @@ data/processed/eval/<experiment_name>_rag_outputs_scored.json
 로컬 파일 기반이라 별도 서버가 필요 없습니다.
 
 ```bash
-python scripts/run_rag_eval.py --config configs/baseline_rag.yaml --llm-model gpt-5-mini --vector-db faiss
+python scripts/run_openai_rag_eval.py --config configs/baseline_rag.yaml --llm-model gpt-5-mini --vector-db faiss
 ```
 
 ### Chroma
@@ -198,7 +186,7 @@ python scripts/run_rag_eval.py --config configs/baseline_rag.yaml --llm-model gp
 로컬 persistent Chroma DB를 사용합니다. 별도 서버는 필요 없습니다.
 
 ```bash
-python scripts/run_rag_eval.py --config configs/baseline_rag.yaml --llm-model gpt-5-mini --vector-db chroma
+python scripts/run_openai_rag_eval.py --config configs/baseline_rag.yaml --llm-model gpt-5-mini --vector-db chroma
 ```
 
 ### Qdrant
@@ -212,7 +200,7 @@ url: http://localhost:6333
 따라서 Qdrant 서버가 먼저 실행되어 있어야 합니다.
 
 ```bash
-python scripts/run_rag_eval.py --config configs/baseline_rag.yaml --llm-model gpt-5-mini --vector-db qdrant
+python scripts/run_openai_rag_eval.py --config configs/baseline_rag.yaml --llm-model gpt-5-mini --vector-db qdrant
 ```
 
 ### Supabase
@@ -234,7 +222,7 @@ $env:SUPABASE_SERVICE_ROLE_KEY="..."
 실행:
 
 ```bash
-python scripts/run_rag_eval.py --config configs/baseline_rag.yaml --llm-model gpt-5-mini --vector-db supabase
+python scripts/run_openai_rag_eval.py --config configs/baseline_rag.yaml --llm-model gpt-5-mini --vector-db supabase
 ```
 
 ## 9. 평가 개수 변경
