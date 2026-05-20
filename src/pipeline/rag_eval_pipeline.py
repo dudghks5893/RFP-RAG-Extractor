@@ -50,7 +50,7 @@ from src.vectorstores import FAISSVectorStore
 from src.retrieval import RAGRetriever
 from src.generation import load_llm_generator
 from src.evaluation.evaluator import RAGEvaluator
-
+from src.constants.human_eval_questions import HUMAN_EVAL_QUESTIONS
 
 class RAGEvalPipeline:
     """
@@ -809,6 +809,174 @@ class RAGEvalPipeline:
 
         return result
 
+    
+    def run_user_query(
+        self,
+        question: str,
+        log_human_eval: bool = True,
+        human_eval_csv: str | Path = "outputs/human_eval/real_user_eval_sheet.csv",
+    ) -> Dict[str, Any]:
+        """
+        실제 사용자 질문 1개에 대해 RAG를 실행합니다.
+
+        중요:
+        - 이 함수는 자동 평가 후 이미 로드되어 있는 retriever/generator/vector DB를 재사용합니다.
+        - self.retriever 또는 self.generator가 None인 경우에만 방어적으로 setup합니다.
+        - 정상적인 run() 흐름에서는 자동 평가 단계에서 이미 모두 준비되어 있으므로
+          모델과 vector DB를 다시 로드하지 않습니다.
+
+        용도:
+        - 자동 평가가 끝난 뒤 실제 사용자 질문 리스트를 실행
+        - 팀원 수동 평가용 CSV에 질문/context/답변 누적 저장
+        """
+        if self.retriever is None:
+            # 일반적인 run() 흐름에서는 이미 setup_retriever()가 호출되어 있으므로
+            # 여기로 들어오지 않습니다.
+            self.setup_retriever()
+
+        if self.generator is None:
+            # 일반적인 run() 흐름에서는 이미 load_generator()가 호출되어 있으므로
+            # 여기로 들어오지 않습니다.
+            self.load_generator()
+
+        start_total = time.perf_counter()
+
+        start_retrieval = time.perf_counter()
+        retrieved_chunks = self.retriever.retrieve(
+            query=question,
+            top_k=self.config["retrieval"]["top_k"],
+        )
+        retrieval_latency_sec = time.perf_counter() - start_retrieval
+
+        generation_result = self.generator.generate_from_retrieved_chunks(
+            question=question,
+            retrieved_chunks=retrieved_chunks,
+            return_prompt=False,
+        )
+
+        total_latency_sec = time.perf_counter() - start_total
+
+        retrieved_ids = self.retriever.get_retrieved_ids(retrieved_chunks)
+        retrieved_chunk_ids = self.retriever.get_retrieved_chunk_ids(retrieved_chunks)
+        retrieved_contexts = self.retriever.get_retrieved_contexts(retrieved_chunks)
+        compact_chunks = self.retriever.compact_retrieved_chunks(
+            retrieved_chunks,
+            max_text_chars=1500,
+        )
+
+        result = {
+            "question": question,
+            "retrieved_ids": retrieved_ids,
+            "retrieved_chunk_ids": retrieved_chunk_ids,
+            "retrieved_chunks": compact_chunks,
+            "retrieved_contexts": retrieved_contexts,
+            "response": generation_result["response"],
+            "retrieval_latency_sec": retrieval_latency_sec,
+            "generation_latency_sec": generation_result["generation_latency_sec"],
+            "total_latency_sec": total_latency_sec,
+            "input_tokens": generation_result["input_tokens"],
+            "output_tokens": generation_result["output_tokens"],
+            "total_tokens": generation_result["total_tokens"],
+            "estimated_cost": 0.0,
+        }
+
+        if log_human_eval:
+            if self.evaluator is None:
+                self.setup_evaluator()
+
+            output_csv = resolve_project_path(
+                self.project_root,
+                human_eval_csv,
+            )
+
+            self.evaluator.log_for_human_eval(
+                question=question,
+                rag_result=result,
+                output_csv=str(output_csv),
+            )
+
+        return result
+
+
+
+    def run_human_eval_queries_if_enabled(self) -> List[Dict[str, Any]]:
+        """
+        팀원 수동 평가용 실제 사용자 질문 리스트를 실행합니다.
+
+        실행 시점:
+        - 자동 평가셋 RAG 실행과 evaluate()가 끝난 직후
+        - pipeline.cleanup()이 호출되기 전
+
+        중요:
+        - 자동 평가에서 이미 로드한 embedder/vector_store/retriever/generator를 그대로 재사용합니다.
+        - 여기서 모델이나 vector DB를 새로 로드하지 않습니다.
+        - 모든 팀원 평가 질문 실행이 끝난 뒤 run_rag_eval.py의 finally에서
+          pipeline.cleanup()과 disk_guard.cleanup()이 실행됩니다.
+        """
+        human_eval_cfg = self.config.get("human_eval", {})
+
+        if not human_eval_cfg.get("enabled", False):
+            print("Human eval query logging skipped: human_eval.enabled=False")
+            return []
+
+        output_csv = human_eval_cfg.get(
+            "output_csv",
+            "outputs/human_eval/real_user_eval_sheet.csv",
+        )
+
+        questions = HUMAN_EVAL_QUESTIONS
+
+        if not questions:
+            print("Human eval query logging skipped: HUMAN_EVAL_QUESTIONS is empty")
+            return []
+
+        print("\n===== Run Human Eval Queries =====")
+        print("reuse existing retriever/generator/vector DB")
+        print("num_questions:", len(questions))
+        print("output_csv:", output_csv)
+
+        human_eval_outputs = []
+
+        for question in progress_iter(
+            questions,
+            total=len(questions),
+            desc="Running human eval queries",
+            log_every=1,
+            min_interval_sec=0.0,
+        ):
+            try:
+                result = self.run_user_query(
+                    question=question,
+                    log_human_eval=True,
+                    human_eval_csv=output_csv,
+                )
+                human_eval_outputs.append(result)
+
+            except Exception as e:
+                print(f"[Human Eval][ERROR] question={question} | error={repr(e)}")
+
+                human_eval_outputs.append({
+                    "question": question,
+                    "retrieved_ids": [],
+                    "retrieved_chunk_ids": [],
+                    "retrieved_chunks": [],
+                    "retrieved_contexts": [],
+                    "response": "",
+                    "error": repr(e),
+                    "retrieval_latency_sec": 0.0,
+                    "generation_latency_sec": 0.0,
+                    "total_latency_sec": 0.0,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "total_tokens": 0,
+                    "estimated_cost": 0.0,
+                })
+
+        print("Human eval query logging 완료:", output_csv)
+
+        return human_eval_outputs
+
+        
     def run_rag_on_sample(self) -> List[Dict[str, Any]]:
         """
         sample_eval_dataset 전체에 대해 RAG를 실행하고 결과를 저장합니다.
@@ -1089,6 +1257,10 @@ class RAGEvalPipeline:
         self.run_rag_on_sample()
 
         results = self.evaluate()
+
+        # 실제 사용자 질문 리스트를 실행하고 팀원 평가용
+        human_eval_outputs = self.run_human_eval_queries_if_enabled()
+        results["human_eval_outputs"] = human_eval_outputs
 
         return results
 
