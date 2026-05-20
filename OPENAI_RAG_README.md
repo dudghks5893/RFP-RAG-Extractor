@@ -3,6 +3,8 @@
 이 문서는 기존 RFP 추출/정제/청킹 흐름은 그대로 사용하고, 마지막 RAG 구축 및 평가 단계만 OpenAI 모델과 여러 VectorDB 조합으로 실행하는 방법을 정리합니다.
 
 ## 실행방법 요약
+pip install -r requirements-openai-rag.txt
+
 1.open api key 입력 
  - .env를 통해서
  - read -s를 통해서
@@ -21,7 +23,7 @@
 4. 추출, 정제, 청킹
  - python scripts/run_extract_chunk.py --config configs/baseline_rag.yaml
 
-5. python scripts/run_rag_eval.py --config configs/baseline_rag.yaml --llm-model gpt-5-mini --vector-db faiss
+5. python scripts/run_openai_rag_eval.py --config configs/baseline_rag.yaml --llm-model gpt-5-mini --vector-db faiss
 위와 같이 실험 하고자 하는 모델과 벡터 선택하여 실행
 
 6. Qdrant, Supabase의 경우 별도의 설정 필요함
@@ -133,21 +135,21 @@ logs/extract_clean_chunk_log.csv
 각 실험은 `evaluation.sample_size: 20` 설정에 따라 기본적으로 20개 평가 문항만 실행합니다.
 
 ```bash
-python scripts/run_rag_eval.py --config configs/baseline_rag.yaml --llm-model gpt-5-mini --vector-db qdrant
-python scripts/run_rag_eval.py --config configs/baseline_rag.yaml --llm-model gpt-5-mini --vector-db supabase
-python scripts/run_rag_eval.py --config configs/baseline_rag.yaml --llm-model gpt-5-mini --vector-db faiss
-python scripts/run_rag_eval.py --config configs/baseline_rag.yaml --llm-model gpt-5-mini --vector-db chroma
+python scripts/run_openai_rag_eval.py --config configs/baseline_rag.yaml --llm-model gpt-5-mini --vector-db qdrant
+python scripts/run_openai_rag_eval.py --config configs/baseline_rag.yaml --llm-model gpt-5-mini --vector-db supabase
+python scripts/run_openai_rag_eval.py--config configs/baseline_rag.yaml --llm-model gpt-5-mini --vector-db faiss
+python scripts/run_openai_rag_eval.py --config configs/baseline_rag.yaml --llm-model gpt-5-mini --vector-db chroma
 
-python scripts/run_rag_eval.py --config configs/baseline_rag.yaml --llm-model gpt-5-nano --vector-db qdrant
-python scripts/run_rag_eval.py --config configs/baseline_rag.yaml --llm-model gpt-5-nano --vector-db supabase
-python scripts/run_rag_eval.py --config configs/baseline_rag.yaml --llm-model gpt-5-nano --vector-db faiss
-python scripts/run_rag_eval.py --config configs/baseline_rag.yaml --llm-model gpt-5-nano --vector-db chroma
+python scripts/run_openai_rag_eval.py --config configs/baseline_rag.yaml --llm-model gpt-5-nano --vector-db qdrant
+python scripts/run_openai_rag_eval.py --config configs/baseline_rag.yaml --llm-model gpt-5-nano --vector-db supabase
+python scripts/run_openai_rag_eval.py --config configs/baseline_rag.yaml --llm-model gpt-5-nano --vector-db faiss
+python scripts/run_openai_rag_eval.py --config configs/baseline_rag.yaml --llm-model gpt-5-nano --vector-db chroma
 ```
 
 ## 6. 8개 실험 한 번에 실행
 
 ```bash
-python scripts/run_rag_eval.py --config configs/baseline_rag.yaml --matrix
+python scripts/run_openai_rag_eval.py --config configs/baseline_rag.yaml --matrix
 ```
 
 실행 조합:
