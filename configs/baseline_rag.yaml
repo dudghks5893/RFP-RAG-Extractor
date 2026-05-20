@@ -181,10 +181,8 @@ embedding:
   # -------------------------------------------------------
   openai_model_name: text-embedding-3-small
 
-
   # embedding batch size
   batch_size: 32
-
 
   # cosine similarity용 normalize
   normalize_embeddings: true
@@ -194,10 +192,7 @@ embedding:
   # 처음 실행하거나 section_chunks.jsonl / embedding model이 바뀌면 true로 설정하세요.
   # 이미 저장된 벡터 DB (ex:FAISS)를 재사용하려면 false로 바꾸면 됩니다.
   force_rebuild_index: false
-<<<<<<< HEAD
 
-=======
->>>>>>> b71b2b821e2ca66b71b59b2aface0a81ff033e23
 
   # 선택값: null이면 SentenceTransformer가 자동 device 선택
   # OOM이 자주 나면 "cpu"로 고정 가능
@@ -394,26 +389,15 @@ evaluation:
   # 전체 평가셋 중 실제 자동 평가에 사용할 문항 수입니다.
   sample_size: 20
 
-
   # keyword_group_recall이 이 값보다 낮으면 실패 케이스로 봅니다.
   # 1.0이면 required keyword group을 하나라도 놓친 문항을 실패로 분류합니다.
   keyword_failure_threshold: 1.0
-<<<<<<< HEAD
+  
 # =========================================================
 # 사람 직접 평가 설정
 # =========================================================
 
 human_eval:
   # 팀원 평가
-  # true면 human evaluation csv 생성
   enabled: true
-
-  # 결과 저장 CSV
-=======
-
-
-human_eval:
-  # 팀원 평가
-  enabled: true
->>>>>>> b71b2b821e2ca66b71b59b2aface0a81ff033e23
   output_csv: reports/real_user_eval_sheet.csv
