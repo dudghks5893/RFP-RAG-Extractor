@@ -98,3 +98,6 @@ logs/
 
 # runtime cache
 .runtime_cache/
+
+# yaml
+.yaml

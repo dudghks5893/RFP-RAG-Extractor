@@ -43,8 +43,8 @@ extract:
 # =========================================================
 
 experiment:
-  name: baseline_openai_chroma
-  description: OpenAI Embedding + OpenAI LLM + Chroma RAG baseline
+  name: baseline_EXAONE_chroma
+  description: OpenAI Embedding + EXAONE LLM + Chroma RAG baseline
   random_seed: 42
 
 
@@ -152,7 +152,7 @@ retrieval:
 llm:
 
   # LLM 사용
-  provider: openai
+  provider: huggingface
 
   # HF 실험용 fallback 값입니다. OpenAI 실험에서는 사용하지 않습니다.
   hf_model_name: LGAI-EXAONE/EXAONE-3.5-7.8B-Instruct
