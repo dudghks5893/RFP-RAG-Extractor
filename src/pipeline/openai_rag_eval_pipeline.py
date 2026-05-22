@@ -177,7 +177,6 @@ class OpenAIFaissStore:
 
     def load(self) -> None:
         import faiss
-
         self.index = faiss.read_index(str(self.index_path))
         with self.chunk_meta_path.open("rb") as handle:
             self.chunks = pickle.load(handle)
@@ -205,7 +204,6 @@ class OpenAIChromaStore:
 
     def _collection(self):
         import chromadb
-
         client = chromadb.PersistentClient(path=str(self.persist_dir))
         return client.get_or_create_collection(self.collection_name)
 
@@ -258,7 +256,6 @@ class OpenAIQdrantStore:
 
     def _client(self):
         from qdrant_client import QdrantClient
-
         return QdrantClient(url=self.url, api_key=self.api_key)
 
     def exists(self) -> bool:
@@ -270,7 +267,6 @@ class OpenAIQdrantStore:
 
     def build(self, chunks: List[Dict[str, Any]], embeddings: List[List[float]]) -> None:
         from qdrant_client.models import Distance, PointStruct, VectorParams
-
         client = self._client()
         client.recreate_collection(
             collection_name=self.collection_name,
@@ -306,7 +302,6 @@ class OpenAISupabaseStore:
         if not self.url or not self.key:
             raise RuntimeError("Supabase URL/key environment variables are not set.")
         from supabase import create_client
-
         return create_client(self.url, self.key)
 
     def exists(self) -> bool:
@@ -520,11 +515,28 @@ class OpenAIRAGEvalPipeline:
         question = eval_item["question"]
         start_total = time.perf_counter()
         start_retrieval = time.perf_counter()
+        
         query_embedding = self.embedder.encode_query(question)
         retrieved = self.vector_store.search(query_embedding, int(self.config["retrieval"]["top_k"]))
         retrieval_latency = time.perf_counter() - start_retrieval
+        
         generation = self.generator.generate_from_retrieved_chunks(question, retrieved)
         total_latency = time.perf_counter() - start_total
+
+        # [추가] 모델별 1M 토큰당 단가 설정(open ai 공식 홈페이지 기준)
+        llm_pricing = {
+            "gpt-5-mini": {"input": 0.15 / 1_000_000, "output": 0.60 / 1_000_000},
+            "gpt-5-nano": {"input": 0.075 / 1_000_000, "output": 0.30 / 1_000_000},
+        }
+        
+        # 현재 활성화된 모델 가져오기
+        current_model = getattr(self.generator, "model_name", "gpt-5-mini")
+        pricing = llm_pricing.get(current_model, {"input": 0.0, "output": 0.0})
+
+        # 실제 비용 계산
+        input_cost = generation["input_tokens"] * pricing["input"]
+        output_cost = generation["output_tokens"] * pricing["output"]
+        calculated_cost = input_cost + output_cost
 
         return {
             **eval_item,
@@ -539,7 +551,7 @@ class OpenAIRAGEvalPipeline:
             "input_tokens": generation["input_tokens"],
             "output_tokens": generation["output_tokens"],
             "total_tokens": generation["total_tokens"],
-            "estimated_cost": 0.0,
+            "estimated_cost": calculated_cost,  #  비용 반영
         }
 
     @staticmethod
@@ -583,6 +595,15 @@ class OpenAIRAGEvalPipeline:
         self.evaluator = RAGEvaluator(auto_download_nltk=False, use_nltk_tokenizer=False)
         top_k = int(self.config["retrieval"]["top_k"])
         metrics = self.evaluator.evaluate_all(self.rag_outputs, k=top_k)
+        
+        # [추가] 전체 총 비용 및 쿼리당 평균 비용 산출
+        valid_costs = [row.get("estimated_cost", 0.0) for row in self.rag_outputs if "error" not in row]
+        total_cost = sum(valid_costs)
+        avg_cost_per_query = total_cost / len(valid_costs) if valid_costs else 0.0
+
+        metrics["total_cost"] = total_cost
+        metrics["avg_cost_per_query"] = avg_cost_per_query
+
         self.evaluator.save_metrics(metrics, str(self.paths["metrics_path"]))
         self.evaluator.save_metrics(
             self.evaluator.evaluate_by_group(self.rag_outputs, "question_type", k=top_k),
@@ -600,6 +621,7 @@ class OpenAIRAGEvalPipeline:
             self.evaluator.evaluate_by_group(self.rag_outputs, "file_type", k=top_k),
             str(self.paths["metrics_by_file_type_path"]),
         )
+        
         retrieval_failures = self.evaluator.get_retrieval_failure_cases(self.rag_outputs, k=top_k)
         keyword_failures = self.evaluator.get_keyword_failure_cases(
             self.rag_outputs,
@@ -609,7 +631,9 @@ class OpenAIRAGEvalPipeline:
         self.evaluator.save_rows_as_csv(keyword_failures, str(self.paths["keyword_failure_path"]))
         self.scored_outputs = self.evaluator.attach_keyword_scores(self.rag_outputs)
         self.evaluator.save_rows_as_json(self.scored_outputs, str(self.paths["rag_output_scored_path"]))
+        
         summary_df = self._save_summary_csv(self.scored_outputs)
+        
         self.evaluator.save_metrics(
             {
                 "config": self.config,
@@ -618,6 +642,8 @@ class OpenAIRAGEvalPipeline:
                 "num_rag_outputs": len(self.rag_outputs),
                 "num_retrieval_failures": len(retrieval_failures),
                 "num_keyword_failures": len(keyword_failures),
+                "total_cost": total_cost,               # 파일 저장
+                "avg_cost_per_query": avg_cost_per_query # 파일 저장
             },
             str(self.paths["experiment_summary_path"]),
         )
@@ -652,6 +678,7 @@ class OpenAIRAGEvalPipeline:
                     "total_latency_sec": row.get("total_latency_sec"),
                     "input_tokens": row.get("input_tokens"),
                     "output_tokens": row.get("output_tokens"),
+                    "estimated_cost": row.get("estimated_cost", 0.0),  # CSV에 비용 열 추가
                     "error": row.get("error", ""),
                 }
             )
