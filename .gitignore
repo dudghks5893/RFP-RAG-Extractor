@@ -89,3 +89,12 @@ Thumbs.db
 ### Logs ###
 *.log
 logs/
+
+# env / secrets
+.env
+.env.*
+*.env
+*.env.*
+
+# runtime cache
+.runtime_cache/

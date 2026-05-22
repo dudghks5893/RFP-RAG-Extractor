@@ -1,0 +1,203 @@
+# =========================================================
+# baseline_openai_chroma.yaml
+#
+# 목적:
+# - OpenAI embedding + OpenAI LLM + Chroma VectorDB 기반 RAG baseline 실험
+# - HF baseline과 결과/벡터DB가 섞이지 않도록 experiment.name과 Chroma persist_dir 분리
+#
+# 실행 전 필요:
+# - OPENAI_API_KEY 환경변수 또는 .env 설정
+# - chromadb 패키지 설치
+# =========================================================
+
+# =========================================================
+# 원본 데이터 추출 / 정제 / 청킹 설정
+# =========================================================
+
+extract:
+
+  raw_dir: data/raw
+  data_list_path: data/raw/data_list.csv
+  extracted_dir: data/processed/extracted
+  cleaned_dir: data/processed/cleaned
+  output_chunk_path: data/chunks/section/section_chunks.jsonl
+  process_log_path: logs/extract_clean_chunk_log.csv
+
+  columns:
+    doc_id: 공고 번호
+    file_name: 파일명
+    file_type: 파일형식
+    project_name: 사업명
+    organization: 발주 기관
+
+  chunking:
+    max_chars: 3000
+    overlap_chars: 300
+    min_chars: 100
+
+  force_rebuild_chunks: true
+
+
+# =========================================================
+# 실험 기본 정보
+# =========================================================
+
+experiment:
+  name: baseline_openai_chroma
+  description: OpenAI Embedding + OpenAI LLM + Chroma RAG baseline
+  random_seed: 42
+
+
+# =========================================================
+# 전체 경로 설정
+# =========================================================
+
+paths:
+  chunk_path: data/chunks/section/section_chunks.jsonl
+  eval_dataset_path: data/processed/eval/eval_dataset.json
+  eval_sample_path: data/processed/eval/eval_dataset_sample_20.json
+
+  # 기본 vector DB 루트입니다.
+  # 실제 Chroma 저장 경로는 vector_db.stores.chroma.persist_dir를 우선 사용합니다.
+  vector_db_dir: data/vector_db
+
+  # provider_split 파이프라인에서는 experiment_key 기반으로 자동 분리 저장됩니다.
+  # 기존 코드 호환성을 위해 유지합니다.
+  rag_output_path: data/processed/eval/rag_outputs.json
+  rag_output_scored_path: data/processed/eval/rag_outputs_scored.json
+
+  report_dir: reports/evaluation
+
+
+# =========================================================
+# Chunking 전략
+# =========================================================
+
+chunking:
+  strategy: section
+
+
+# =========================================================
+# Embedding 설정
+# =========================================================
+
+embedding:
+
+  # OpenAI embedding 사용
+  provider: openai
+
+  # HF 실험용 fallback 값입니다. OpenAI 실험에서는 사용하지 않습니다.
+  hf_model_name: nlpai-lab/KURE-v1
+
+  # OpenAI embedding 모델
+  openai_model_name: text-embedding-3-small
+
+  batch_size: 32
+  normalize_embeddings: true
+
+  # 처음 실행하거나 embedding model / chunk 내용이 바뀌면 true
+  # Chroma 인덱스가 이미 정상 생성된 뒤 재사용하려면 false
+  force_rebuild_index: true
+
+  # OpenAI embedding에서는 사용하지 않지만 HF config 호환을 위해 유지
+  device: null
+  reload_query_embedder_on_cpu: false
+
+
+# =========================================================
+# Vector DB 설정
+# =========================================================
+
+vector_db:
+
+  # OpenAI + Chroma 실험
+  type: chroma
+
+  stores:
+
+    faiss:
+      persist_dir: data/vector_db/faiss_openai
+      index_file: index.faiss
+      chunk_meta_file: chunks.pkl
+      config_file: config.json
+
+    chroma:
+      persist_dir: data/vector_db/chroma_openai
+      collection: rfp_openai_rag
+
+    qdrant:
+      url: http://localhost:6333
+      api_key_env: QDRANT_API_KEY
+      collection: rfp_openai_rag
+
+    supabase:
+      url_env: SUPABASE_URL
+      key_env: SUPABASE_SERVICE_ROLE_KEY
+      table: rfp_chunks
+      match_function: match_rfp_chunks
+
+
+# =========================================================
+# Retrieval 설정
+# =========================================================
+
+retrieval:
+  top_k: 5
+
+
+# =========================================================
+# LLM 설정
+# =========================================================
+
+llm:
+
+  # OpenAI LLM 사용
+  provider: openai
+
+  # HF 실험용 fallback 값입니다. OpenAI 실험에서는 사용하지 않습니다.
+  hf_model_name: Qwen/Qwen2.5-1.5B-Instruct
+
+  # OpenAI LLM 모델
+  openai_model_name: gpt-5-mini
+  fallback_model_name: gpt-5-nano
+
+  max_output_tokens: 512
+
+  # HF generator 호환용으로 같이 유지
+  max_new_tokens: 512
+
+  temperature: 0.0
+  do_sample: false
+  trust_remote_code: true
+
+
+# =========================================================
+# OpenAI API 설정
+# =========================================================
+
+openai:
+  api_key_env: OPENAI_API_KEY
+
+  # embedding.openai_model_name / llm.openai_model_name이 우선 사용됩니다.
+  # 아래 값은 fallback 또는 호환용입니다.
+  embedding_model: text-embedding-3-small
+  llm_model: gpt-5-mini
+  fallback_llm_model: gpt-5-nano
+
+
+# =========================================================
+# 평가 설정
+# =========================================================
+
+evaluation:
+  sample_size: 20
+  keyword_failure_threshold: 1.0
+
+
+# =========================================================
+# 사람 직접 평가 설정
+# =========================================================
+
+human_eval:
+  enabled: true
+  output_csv: reports/real_user_eval_sheet.csv
