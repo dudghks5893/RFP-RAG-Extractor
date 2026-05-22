@@ -525,7 +525,7 @@ class RAGEvalPipeline:
         embedding_cfg = self.config["embedding"]
 
         self.embedder = load_embedding_model(
-            model_name=embedding_cfg["model_name"],
+            model_name=embedding_cfg["hf_model_name"],
             normalize_embeddings=embedding_cfg.get("normalize_embeddings", True),
             device=device,
             trust_remote_code=True,
@@ -731,7 +731,7 @@ class RAGEvalPipeline:
         llm_cfg = self.config["llm"]
 
         self.generator = load_llm_generator(
-            model_name=llm_cfg["model_name"],
+            model_name=llm_cfg["hf_model_name"],
             max_new_tokens=llm_cfg.get("max_new_tokens", 512),
             temperature=llm_cfg.get("temperature", 0.0),
             do_sample=llm_cfg.get("do_sample", False),
