@@ -188,15 +188,15 @@ class RAGEvalPipeline:
             f"_sample{sample_size}"
         )
 
-        self.paths["metrics_path"] = report_dir / f"{file_prefix}_sample{sample_size}_metrics.json"
-        self.paths["metrics_by_question_type_path"] = report_dir / f"{file_prefix}_sample{sample_size}_by_question_type.json"
-        self.paths["metrics_by_source_type_path"] = report_dir / f"{file_prefix}_sample{sample_size}_by_source_type.json"
-        self.paths["metrics_by_answer_format_path"] = report_dir / f"{file_prefix}_sample{sample_size}_by_answer_format.json"
-        self.paths["metrics_by_file_type_path"] = report_dir / f"{file_prefix}_sample{sample_size}_by_file_type.json"
-        self.paths["retrieval_failure_path"] = report_dir / f"{file_prefix}_sample{sample_size}_retrieval_failures.csv"
-        self.paths["keyword_failure_path"] = report_dir / f"{file_prefix}_sample{sample_size}_keyword_failures.csv"
-        self.paths["summary_csv_path"] = report_dir / f"{file_prefix}_sample{sample_size}_summary.csv"
-        self.paths["experiment_summary_path"] = report_dir / f"{file_prefix}_sample{sample_size}_experiment_summary.json"
+        self.paths["metrics_path"] = report_dir / f"{file_prefix}_metrics.json"
+        self.paths["metrics_by_question_type_path"] = report_dir / f"{file_prefix}_by_question_type.json"
+        self.paths["metrics_by_source_type_path"] = report_dir / f"{file_prefix}_by_source_type.json"
+        self.paths["metrics_by_answer_format_path"] = report_dir / f"{file_prefix}_by_answer_format.json"
+        self.paths["metrics_by_file_type_path"] = report_dir / f"{file_prefix}_by_file_type.json"
+        self.paths["retrieval_failure_path"] = report_dir / f"{file_prefix}_retrieval_failures.csv"
+        self.paths["keyword_failure_path"] = report_dir / f"{file_prefix}_keyword_failures.csv"
+        self.paths["summary_csv_path"] = report_dir / f"{file_prefix}_summary.csv"
+        self.paths["experiment_summary_path"] = report_dir / f"{file_prefix}_experiment_summary.json"
         self.paths["chunk_fingerprint_path"] = self.paths["vector_db_dir"] / "chunk_fingerprint.json"
 
     def print_summary(self) -> None:
