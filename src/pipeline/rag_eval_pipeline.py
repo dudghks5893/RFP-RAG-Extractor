@@ -170,15 +170,33 @@ class RAGEvalPipeline:
         sample_size = cfg["evaluation"]["sample_size"]
         report_dir = self.paths["report_dir"]
 
-        self.paths["metrics_path"] = report_dir / f"{experiment_name}_sample{sample_size}_metrics.json"
-        self.paths["metrics_by_question_type_path"] = report_dir / f"{experiment_name}_sample{sample_size}_by_question_type.json"
-        self.paths["metrics_by_source_type_path"] = report_dir / f"{experiment_name}_sample{sample_size}_by_source_type.json"
-        self.paths["metrics_by_answer_format_path"] = report_dir / f"{experiment_name}_sample{sample_size}_by_answer_format.json"
-        self.paths["metrics_by_file_type_path"] = report_dir / f"{experiment_name}_sample{sample_size}_by_file_type.json"
-        self.paths["retrieval_failure_path"] = report_dir / f"{experiment_name}_sample{sample_size}_retrieval_failures.csv"
-        self.paths["keyword_failure_path"] = report_dir / f"{experiment_name}_sample{sample_size}_keyword_failures.csv"
-        self.paths["summary_csv_path"] = report_dir / f"{experiment_name}_sample{sample_size}_summary.csv"
-        self.paths["experiment_summary_path"] = report_dir / f"{experiment_name}_sample{sample_size}_experiment_summary.json"
+        # 모델명 가져오기.
+        embedding_model_name = cfg["embedding"]["hf_model_name"]
+        llm_model_name = cfg["llm"]["hf_model_name"]
+        vector_db_name = cfg["vector_db"].get("name", cfg["vector_db"].get("type", "vector_db"))
+
+        # 모델명에 "/"값은 폴더로 인 식 할 수 있기 때문에 "-"으로 변경 후 파일명 안전 처리
+        embedding_model_name = embedding_model_name.replace("/", "-").replace(":", "-").replace(" ", "_")
+        llm_model_name = llm_model_name.replace("/", "-").replace(":", "-").replace(" ", "_")
+        vector_db_name = vector_db_name.replace("/", "-").replace(":", "-").replace(" ", "_")
+        experiment_name = experiment_name.replace("/", "-").replace(":", "-").replace(" ", "_")
+
+        file_prefix = (
+            f"emb-{embedding_model_name}"
+            f"_llm-{llm_model_name}"
+            f"_vdb-{vector_db_name}"
+            f"_sample{sample_size}"
+        )
+
+        self.paths["metrics_path"] = report_dir / f"{file_prefix}_sample{sample_size}_metrics.json"
+        self.paths["metrics_by_question_type_path"] = report_dir / f"{file_prefix}_sample{sample_size}_by_question_type.json"
+        self.paths["metrics_by_source_type_path"] = report_dir / f"{file_prefix}_sample{sample_size}_by_source_type.json"
+        self.paths["metrics_by_answer_format_path"] = report_dir / f"{file_prefix}_sample{sample_size}_by_answer_format.json"
+        self.paths["metrics_by_file_type_path"] = report_dir / f"{file_prefix}_sample{sample_size}_by_file_type.json"
+        self.paths["retrieval_failure_path"] = report_dir / f"{file_prefix}_sample{sample_size}_retrieval_failures.csv"
+        self.paths["keyword_failure_path"] = report_dir / f"{file_prefix}_sample{sample_size}_keyword_failures.csv"
+        self.paths["summary_csv_path"] = report_dir / f"{file_prefix}_sample{sample_size}_summary.csv"
+        self.paths["experiment_summary_path"] = report_dir / f"{file_prefix}_sample{sample_size}_experiment_summary.json"
         self.paths["chunk_fingerprint_path"] = self.paths["vector_db_dir"] / "chunk_fingerprint.json"
 
     def print_summary(self) -> None:
