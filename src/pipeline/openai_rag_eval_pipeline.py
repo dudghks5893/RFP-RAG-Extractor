@@ -384,40 +384,63 @@ class OpenAIRAGEvalPipeline:
     def _resolve_paths(self) -> None:
         cfg = self.config
         experiment_name = cfg["experiment"]["name"]
-        sample_size = cfg["evaluation"]["sample_size"]
         vector_type = cfg["vector_db"]["type"]
 
-        self.paths["chunk_path"] = resolve_project_path(self.project_root, cfg["paths"]["chunk_path"])
-        self.paths["eval_dataset_path"] = resolve_project_path(self.project_root, cfg["paths"]["eval_dataset_path"])
-        self.paths["eval_sample_path"] = resolve_project_path(self.project_root, cfg["paths"]["eval_sample_path"])
-        self.paths["report_dir"] = resolve_project_path(self.project_root, cfg["paths"]["report_dir"]) / experiment_name
-        self.paths["rag_output_path"] = resolve_project_path(
+        self.paths["chunk_path"] = resolve_project_path(
             self.project_root,
-            f"data/processed/eval/{experiment_name}_rag_outputs.json",
+            cfg["paths"]["chunk_path"],
         )
-        self.paths["rag_output_scored_path"] = resolve_project_path(
+        self.paths["eval_dataset_path"] = resolve_project_path(
             self.project_root,
-            f"data/processed/eval/{experiment_name}_rag_outputs_scored.json",
+            cfg["paths"]["eval_dataset_path"],
         )
+        self.paths["eval_sample_path"] = resolve_project_path(
+            self.project_root,
+            cfg["paths"]["eval_sample_path"],
+        )
+
+        # experiment_name은 폴더명으로만 사용
+        self.paths["report_dir"] = (
+            resolve_project_path(self.project_root, cfg["paths"]["report_dir"])
+            / experiment_name
+        )
+
+        # RAG output도 실험별 하위 폴더로 분리
+        eval_output_dir = (
+            resolve_project_path(self.project_root, "data/processed/eval")
+            / experiment_name
+        )
+
+        self.paths["rag_output_path"] = eval_output_dir / "rag.json"
+        self.paths["rag_output_scored_path"] = eval_output_dir / "rag_scored.json"
+
         store_cfg = cfg["vector_db"].get("stores", {}).get(vector_type, {})
-        persist_dir = store_cfg.get("persist_dir") or cfg["paths"].get("vector_db_dir", "data/vector_db")
-        self.paths["vector_db_dir"] = resolve_project_path(self.project_root, persist_dir) / experiment_name
+        persist_dir = store_cfg.get("persist_dir") or cfg["paths"].get(
+            "vector_db_dir",
+            "data/vector_db",
+        )
+        self.paths["vector_db_dir"] = (
+            resolve_project_path(self.project_root, persist_dir)
+            / experiment_name
+        )
 
         self.paths["report_dir"].mkdir(parents=True, exist_ok=True)
         self.paths["vector_db_dir"].mkdir(parents=True, exist_ok=True)
-        self.paths["rag_output_path"].parent.mkdir(parents=True, exist_ok=True)
+        eval_output_dir.mkdir(parents=True, exist_ok=True)
 
         report_dir = self.paths["report_dir"]
-        prefix = f"{experiment_name}_sample{sample_size}"
+        prefix = experiment_name
+
+        # 파일명은 짧게 고정
         self.paths["metrics_path"] = report_dir / f"{prefix}_metrics.json"
-        self.paths["metrics_by_question_type_path"] = report_dir / f"{prefix}_by_question_type.json"
-        self.paths["metrics_by_source_type_path"] = report_dir / f"{prefix}_by_source_type.json"
-        self.paths["metrics_by_answer_format_path"] = report_dir / f"{prefix}_by_answer_format.json"
-        self.paths["metrics_by_file_type_path"] = report_dir / f"{prefix}_by_file_type.json"
+        self.paths["metrics_by_question_type_path"] = report_dir / f"{prefix}_by_qtype.json"
+        self.paths["metrics_by_source_type_path"] = report_dir / f"{prefix}_by_source.json"
+        self.paths["metrics_by_answer_format_path"] = report_dir / f"{prefix}_by_answer.json"
+        self.paths["metrics_by_file_type_path"] = report_dir / f"{prefix}_by_file.json"
         self.paths["retrieval_failure_path"] = report_dir / f"{prefix}_retrieval_failures.csv"
         self.paths["keyword_failure_path"] = report_dir / f"{prefix}_keyword_failures.csv"
         self.paths["summary_csv_path"] = report_dir / f"{prefix}_summary.csv"
-        self.paths["experiment_summary_path"] = report_dir / f"{prefix}_experiment_summary.json"
+        self.paths["experiment_summary_path"] = report_dir / f"{prefix}_experiment.json"
 
     def load_eval_dataset(self) -> None:
         self.eval_dataset = load_json(self.paths["eval_dataset_path"])
