@@ -2,16 +2,16 @@
 실행 스크립트
 
 1. 모듈/경로 점검
-   python scripts/check_project_modules.py --config configs/baseline_rag.yaml
+   python scripts/check_project_modules.py --config configs/openai_hybridsearch_reranker.yaml
 
 2. 원본 파일 추출·정제·청킹
-   python scripts/run_extract_chunk.py --config configs/baseline_rag.yaml
+   python scripts/run_extract_chunk.py --config configs/openai_hybridsearch_reranker.yaml
 
 3. RAG 구축 및 평가
-   python scripts/run_rag_eval.py --config configs/baseline_rag.yaml
+   python scripts/run_rag_eval.py --config configs/openai_hybridsearch_reranker.yaml
 
 4. Vector-DB 수동제거
-    python scripts/run_rag_eval.py --config configs/baseline_rag.yaml --delete-vector-db
+    python scripts/run_rag_eval.py --config configs/baseline_openai_chroma.yaml --delete-vector-db
 
 디스크 정리 스크립트
 1. 삭제 대상만 확인

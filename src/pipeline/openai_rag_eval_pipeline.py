@@ -3,9 +3,12 @@ from __future__ import annotations
 import copy
 import gc
 import json
+import math
 import os
 import pickle
+import re
 import time
+from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -54,6 +57,176 @@ class OpenAIEmbeddingModel:
 
     def encode_query(self, query: str) -> List[float]:
         return self.encode_texts([query], batch_size=1)[0]
+
+
+class SimpleBM25Index:
+    """
+    외부 의존성 없이 동작하는 간단한 BM25 인덱스입니다.
+
+    목적:
+    - Dense vector search가 놓치는 정확한 키워드 매칭을 보완합니다.
+    - RFP 문서의 '입찰참가자격', '평가기준', '제출기한' 같은 용어 검색에 유리합니다.
+    """
+
+    def __init__(
+        self,
+        chunks: List[Dict[str, Any]],
+        text_key: str = "embedding_text",
+        k1: float = 1.5,
+        b: float = 0.75,
+    ):
+        self.chunks = chunks
+        self.text_key = text_key
+        self.k1 = k1
+        self.b = b
+
+        self.doc_term_freqs: List[Counter[str]] = []
+        self.doc_lengths: List[int] = []
+        self.doc_freqs: Counter[str] = Counter()
+        self.idf: Dict[str, float] = {}
+        self.avgdl = 0.0
+
+        self._build()
+
+    @staticmethod
+    def tokenize(text: str) -> List[str]:
+        text = str(text or "").lower()
+        return re.findall(r"[가-힣A-Za-z0-9]+", text)
+
+    def _chunk_text(self, chunk: Dict[str, Any]) -> str:
+        return str(chunk.get(self.text_key) or chunk.get("text") or "")
+
+    def _build(self) -> None:
+        total_len = 0
+
+        for chunk in self.chunks:
+            tokens = self.tokenize(self._chunk_text(chunk))
+            tf = Counter(tokens)
+
+            self.doc_term_freqs.append(tf)
+            self.doc_lengths.append(len(tokens))
+            total_len += len(tokens)
+
+            for term in tf.keys():
+                self.doc_freqs[term] += 1
+
+        doc_count = len(self.chunks)
+        self.avgdl = total_len / doc_count if doc_count else 0.0
+
+        self.idf = {
+            term: math.log(1.0 + (doc_count - df + 0.5) / (df + 0.5))
+            for term, df in self.doc_freqs.items()
+        }
+
+    def search(self, query: str, top_k: int) -> List[Dict[str, Any]]:
+        query_terms = self.tokenize(query)
+
+        if not query_terms or not self.chunks:
+            return []
+
+        query_tf = Counter(query_terms)
+        scores: List[tuple[int, float]] = []
+
+        for doc_idx, tf in enumerate(self.doc_term_freqs):
+            doc_len = self.doc_lengths[doc_idx]
+            score = 0.0
+
+            for term, q_count in query_tf.items():
+                if term not in tf:
+                    continue
+
+                term_freq = tf[term]
+                idf = self.idf.get(term, 0.0)
+                denom = term_freq + self.k1 * (
+                    1.0 - self.b + self.b * doc_len / (self.avgdl or 1.0)
+                )
+                score += q_count * idf * (term_freq * (self.k1 + 1.0)) / (denom or 1.0)
+
+            if score > 0:
+                scores.append((doc_idx, score))
+
+        scores.sort(key=lambda x: x[1], reverse=True)
+
+        rows = []
+        for rank, (doc_idx, score) in enumerate(scores[:top_k], start=1):
+            chunk = dict(self.chunks[doc_idx])
+            chunk["rank"] = rank
+            chunk["bm25_score"] = float(score)
+            rows.append(chunk)
+
+        return rows
+
+
+class CrossEncoderReranker:
+    """
+    sentence-transformers CrossEncoder 기반 reranker입니다.
+
+    config에서 retrieval.reranker.enabled=true일 때만 로드됩니다.
+    예: upskyy/ko-reranker-8k, BAAI/bge-reranker-v2-m3 등
+    """
+
+    def __init__(
+        self,
+        model_name: str,
+        batch_size: int = 16,
+        max_length: int = 512,
+        device: Optional[str] = None,
+    ):
+        try:
+            from sentence_transformers import CrossEncoder
+        except ImportError as exc:
+            raise RuntimeError(
+                "Reranker를 사용하려면 sentence-transformers가 필요합니다. "
+                "설치: pip install sentence-transformers"
+            ) from exc
+
+        kwargs: Dict[str, Any] = {
+            "model_name": model_name,
+            "max_length": max_length,
+        }
+        if device:
+            kwargs["device"] = device
+
+        self.model_name = model_name
+        self.batch_size = batch_size
+        self.model = CrossEncoder(**kwargs)
+
+    def rerank(
+        self,
+        query: str,
+        chunks: List[Dict[str, Any]],
+        top_k: int,
+    ) -> List[Dict[str, Any]]:
+        if not chunks:
+            return []
+
+        pairs = [
+            (
+                query,
+                str(chunk.get("embedding_text") or chunk.get("text") or ""),
+            )
+            for chunk in chunks
+        ]
+
+        scores = self.model.predict(
+            pairs,
+            batch_size=self.batch_size,
+            show_progress_bar=False,
+        )
+
+        reranked = []
+        for chunk, score in zip(chunks, scores):
+            item = dict(chunk)
+            item["rerank_score"] = float(score)
+            reranked.append(item)
+
+        reranked.sort(key=lambda x: x.get("rerank_score", 0.0), reverse=True)
+
+        final = reranked[:top_k]
+        for rank, item in enumerate(final, start=1):
+            item["rank"] = rank
+
+        return final
 
 
 class OpenAILLMGenerator:
@@ -131,13 +304,36 @@ class OpenAILLMGenerator:
     @staticmethod
     def _build_prompt(question: str, retrieved_chunks: List[Dict[str, Any]]) -> str:
         context_blocks = []
+    
         for index, chunk in enumerate(retrieved_chunks, start=1):
-            doc_id = chunk.get("doc_id") or chunk.get("metadata", {}).get("doc_id", "")
-            chunk_id = chunk.get("chunk_id") or chunk.get("metadata", {}).get("chunk_id", "")
-            context_blocks.append(
-                f"[Evidence {index}] doc_id={doc_id} chunk_id={chunk_id}\n{chunk.get('text', '')}"
+            metadata = chunk.get("metadata", {}) or {}
+    
+            doc_id = chunk.get("doc_id") or metadata.get("doc_id", "")
+            chunk_id = chunk.get("chunk_id") or metadata.get("chunk_id", "")
+    
+            project_name = chunk.get("project_name") or metadata.get("project_name", "")
+            organization = chunk.get("organization") or metadata.get("organization", "")
+            section_title = chunk.get("section_title") or metadata.get("section_title", "")
+            section_path = chunk.get("section_path") or metadata.get("section_path", "")
+    
+            if isinstance(section_path, list):
+                section_path = " > ".join(str(x) for x in section_path if x)
+    
+            header = (
+                f"[Evidence {index}] "
+                f"doc_id={doc_id} chunk_id={chunk_id}\n"
+                f"사업명: {project_name}\n"
+                f"발주기관: {organization}\n"
+                f"섹션경로: {section_path}\n"
+                f"섹션제목: {section_title}\n"
             )
+    
+            context_blocks.append(
+                f"{header}\n{chunk.get('text', '')}"
+            )
+    
         contexts = "\n\n".join(context_blocks)
+    
         return (
             "You are a Korean RAG assistant for analyzing RFP documents.\n"
             "Answer in Korean. Use only the evidence below. If the evidence is insufficient, say so.\n\n"
@@ -145,9 +341,6 @@ class OpenAILLMGenerator:
             f"Question: {question}\n"
             "Answer:"
         )
-
-    def unload(self) -> None:
-        self.client = None
 
 
 class OpenAIFaissStore:
@@ -365,6 +558,8 @@ class OpenAIRAGEvalPipeline:
         self.embedder = None
         self.generator = None
         self.vector_store = None
+        self.bm25_index = None
+        self.reranker = None
         self.evaluator = None
 
         self._resolve_paths()
@@ -373,18 +568,139 @@ class OpenAIRAGEvalPipeline:
         llm_model = overrides.get("llm_model")
         vector_db_type = overrides.get("vector_db_type")
         experiment_name = overrides.get("experiment_name")
+        embedding_model = overrides.get("embedding_model")
+    
         if llm_model:
             self.config.setdefault("llm", {})["openai_model_name"] = llm_model
             self.config.setdefault("openai", {})["llm_model"] = llm_model
+    
+        if embedding_model:
+            self.config.setdefault("embedding", {})["openai_model_name"] = embedding_model
+            self.config.setdefault("openai", {})["embedding_model"] = embedding_model
+    
         if vector_db_type:
             self.config.setdefault("vector_db", {})["type"] = vector_db_type
+    
         if experiment_name:
             self.config.setdefault("experiment", {})["name"] = experiment_name
+    
+    
+    @staticmethod
+    def _safe_name(value: str, max_len: int = 40) -> str:
+        """
+        파일/폴더/collection 이름으로 안전하게 쓸 수 있는 짧은 slug 생성.
+        """
+        value = str(value or "").strip()
+
+        if not value:
+            return "unknown"
+
+        value = value.replace("/", "_")
+        value = value.replace("\\", "_")
+        value = re.sub(r"\s+", "_", value)
+        value = re.sub(r"[^0-9A-Za-z가-힣._-]+", "_", value)
+        value = re.sub(r"_+", "_", value)
+        value = value.strip("._-")
+
+        if not value:
+            return "unknown"
+
+        return value[:max_len].strip("._-") or "unknown"
+
+
+    @staticmethod
+    def _short_model_name(model_name: str, max_len: int = 24) -> str:
+        """
+        모델명을 저장용 짧은 이름으로 변환.
+
+        예:
+        text-embedding-3-small -> emb3s
+        text-embedding-3-large -> emb3l
+        gpt-5-mini -> gpt5mini
+        gpt-5-nano -> gpt5nano
+        LGAI-EXAONE/EXAONE-3.5-7.8B-Instruct -> EXAONE-3.5-7.8B
+        """
+        raw = str(model_name or "").strip()
+
+        if not raw:
+            return "unknown"
+
+        aliases = {
+            "text-embedding-3-small": "emb3s",
+            "text-embedding-3-large": "emb3l",
+            "gpt-5-mini": "gpt5mini",
+            "gpt-5-nano": "gpt5nano",
+            "gpt-4o-mini": "gpt4omini",
+            "gpt-4o": "gpt4o",
+        }
+
+        key = raw.lower()
+        if key in aliases:
+            return aliases[key]
+
+        # HuggingFace 스타일 모델명은 마지막 이름만 사용
+        last = raw.replace("\\", "/").split("/")[-1]
+
+        # 너무 긴 instruct 계열 이름 축약
+        last = last.replace("-Instruct", "")
+        last = last.replace("_Instruct", "")
+        last = last.replace("-instruction", "")
+        last = last.replace("_instruction", "")
+
+        return OpenAIRAGEvalPipeline._safe_name(last, max_len=max_len)
+
+
+    def _make_run_name(self) -> str:
+        """
+        최종 저장 이름 생성 규칙:
+
+        exp-{실험명}__emb-{임베딩}__llm-{LLM}__vec-{벡터DB}
+
+        예:
+        exp-baseline__emb-emb3s__llm-gpt5mini__vec-faiss
+        exp-gpt5mini_faiss__emb-emb3s__llm-gpt5mini__vec-faiss
+        """
+        cfg = self.config
+        embedding_cfg = cfg.get("embedding", {})
+        llm_cfg = cfg.get("llm", {})
+        openai_cfg = cfg.get("openai", {})
+
+        experiment_name = (
+            cfg.get("experiment", {}).get("short_name")
+            or cfg.get("experiment", {}).get("name")
+            or "exp"
+        )
+
+        vector_type = cfg.get("vector_db", {}).get("type", "vec")
+
+        embedding_model = (
+            embedding_cfg.get("openai_model_name")
+            or openai_cfg.get("embedding_model")
+            or embedding_cfg.get("hf_model_name")
+            or "embedding"
+        )
+
+        llm_model = (
+            llm_cfg.get("openai_model_name")
+            or openai_cfg.get("llm_model")
+            or llm_cfg.get("hf_model_name")
+            or "llm"
+        )
+
+        exp_name = self._safe_name(experiment_name, max_len=28)
+        emb_name = self._short_model_name(embedding_model, max_len=24)
+        llm_name = self._short_model_name(llm_model, max_len=24)
+        vec_name = self._safe_name(vector_type, max_len=16)
+
+        return f"exp-{exp_name}__emb-{emb_name}__llm-{llm_name}__vec-{vec_name}"
+
 
     def _resolve_paths(self) -> None:
         cfg = self.config
-        experiment_name = cfg["experiment"]["name"]
         vector_type = cfg["vector_db"]["type"]
+
+        # 모든 저장 경로에서 공통으로 사용할 단일 run name
+        self.run_name = self._make_run_name()
 
         self.paths["chunk_path"] = resolve_project_path(
             self.project_root,
@@ -399,16 +715,16 @@ class OpenAIRAGEvalPipeline:
             cfg["paths"]["eval_sample_path"],
         )
 
-        # experiment_name은 폴더명으로만 사용
+        # report 저장 폴더
         self.paths["report_dir"] = (
             resolve_project_path(self.project_root, cfg["paths"]["report_dir"])
-            / experiment_name
+            / self.run_name
         )
 
-        # RAG output도 실험별 하위 폴더로 분리
+        # RAG output 저장 폴더
         eval_output_dir = (
             resolve_project_path(self.project_root, "data/processed/eval")
-            / experiment_name
+            / self.run_name
         )
 
         self.paths["rag_output_path"] = eval_output_dir / "rag.json"
@@ -419,9 +735,11 @@ class OpenAIRAGEvalPipeline:
             "vector_db_dir",
             "data/vector_db",
         )
+
+        # vector DB 저장 폴더
         self.paths["vector_db_dir"] = (
             resolve_project_path(self.project_root, persist_dir)
-            / experiment_name
+            / self.run_name
         )
 
         self.paths["report_dir"].mkdir(parents=True, exist_ok=True)
@@ -429,18 +747,17 @@ class OpenAIRAGEvalPipeline:
         eval_output_dir.mkdir(parents=True, exist_ok=True)
 
         report_dir = self.paths["report_dir"]
-        prefix = experiment_name
 
         # 파일명은 짧게 고정
-        self.paths["metrics_path"] = report_dir / f"{prefix}_metrics.json"
-        self.paths["metrics_by_question_type_path"] = report_dir / f"{prefix}_by_qtype.json"
-        self.paths["metrics_by_source_type_path"] = report_dir / f"{prefix}_by_source.json"
-        self.paths["metrics_by_answer_format_path"] = report_dir / f"{prefix}_by_answer.json"
-        self.paths["metrics_by_file_type_path"] = report_dir / f"{prefix}_by_file.json"
-        self.paths["retrieval_failure_path"] = report_dir / f"{prefix}_retrieval_failures.csv"
-        self.paths["keyword_failure_path"] = report_dir / f"{prefix}_keyword_failures.csv"
-        self.paths["summary_csv_path"] = report_dir / f"{prefix}_summary.csv"
-        self.paths["experiment_summary_path"] = report_dir / f"{prefix}_experiment.json"
+        self.paths["metrics_path"] = report_dir / "metrics.json"
+        self.paths["metrics_by_question_type_path"] = report_dir / "by_qtype.json"
+        self.paths["metrics_by_source_type_path"] = report_dir / "by_source.json"
+        self.paths["metrics_by_answer_format_path"] = report_dir / "by_answer.json"
+        self.paths["metrics_by_file_type_path"] = report_dir / "by_file.json"
+        self.paths["retrieval_failure_path"] = report_dir / "retrieval_failures.csv"
+        self.paths["keyword_failure_path"] = report_dir / "keyword_failures.csv"
+        self.paths["summary_csv_path"] = report_dir / "summary.csv"
+        self.paths["experiment_summary_path"] = report_dir / "experiment.json"
 
     def load_eval_dataset(self) -> None:
         self.eval_dataset = load_json(self.paths["eval_dataset_path"])
@@ -460,19 +777,79 @@ class OpenAIRAGEvalPipeline:
         self.chunks = [row for row in self.chunks if row["text"].strip() and row["doc_id"].strip()]
 
     @staticmethod
+    def _build_embedding_text(row: Dict[str, Any], text: str, metadata: Dict[str, Any]) -> str:
+        project_name = row.get("project_name") or metadata.get("project_name", "")
+        organization = row.get("organization") or metadata.get("organization", "")
+        section_title = row.get("section_title") or metadata.get("section_title", "")
+        section_path = row.get("section_path") or metadata.get("section_path", [])
+    
+        if isinstance(section_path, list):
+            section_path_text = " > ".join(str(x) for x in section_path if x)
+        else:
+            section_path_text = str(section_path or "")
+    
+        header_parts = []
+    
+        if project_name:
+            header_parts.append(f"사업명: {project_name}")
+    
+        if organization:
+            header_parts.append(f"발주기관: {organization}")
+    
+        if section_path_text:
+            header_parts.append(f"섹션경로: {section_path_text}")
+    
+        if section_title:
+            header_parts.append(f"섹션제목: {section_title}")
+    
+        header = "\n".join(header_parts).strip()
+        body = str(text or "").strip()
+    
+        if header:
+            return f"{header}\n\n본문:\n{body}"
+    
+        return body
+
+
+    @staticmethod
     def _standardize_chunk(row: Dict[str, Any], index: int) -> Dict[str, Any]:
         metadata = dict(row.get("metadata") or {})
-        text = row.get("text") or row.get("page_content") or row.get("content") or row.get("chunk_text") or ""
+    
+        text = (
+            row.get("text")
+            or row.get("page_content")
+            or row.get("content")
+            or row.get("chunk_text")
+            or ""
+        )
+    
         doc_id = row.get("doc_id") or metadata.get("doc_id") or ""
         chunk_id = row.get("chunk_id") or metadata.get("chunk_id") or f"chunk_{index:06d}"
-        for key in ["file_name", "file_type", "project_name", "organization", "section_title"]:
+    
+        for key in [
+            "file_name",
+            "file_type",
+            "project_name",
+            "organization",
+            "section_title",
+            "section_path",
+            "section_level",
+        ]:
             if row.get(key) is not None:
                 metadata.setdefault(key, row.get(key))
+    
+        embedding_text = (
+            row.get("embedding_text")
+            or metadata.get("embedding_text")
+            or OpenAIRAGEvalPipeline._build_embedding_text(row, str(text), metadata)
+        )
+    
         return {
             **row,
             "chunk_id": str(chunk_id),
             "doc_id": str(doc_id),
             "text": str(text),
+            "embedding_text": str(embedding_text),
             "metadata": metadata,
         }
 
@@ -487,23 +864,46 @@ class OpenAIRAGEvalPipeline:
 
     def setup_vector_store(self) -> None:
         vector_type = self.config["vector_db"]["type"]
-        store_cfg = copy.deepcopy(self.config["vector_db"].get("stores", {}).get(vector_type, {}))
+        store_cfg = copy.deepcopy(
+            self.config["vector_db"].get("stores", {}).get(vector_type, {})
+        )
+
+        collection_suffix = self._safe_name(
+            getattr(self, "run_name", self._make_run_name()),
+            max_len=80,
+        )
+
         if vector_type == "faiss":
             self.vector_store = OpenAIFaissStore(
                 persist_dir=self.paths["vector_db_dir"],
                 index_file=store_cfg.get("index_file", "index.faiss"),
                 chunk_meta_file=store_cfg.get("chunk_meta_file", "chunks.pkl"),
             )
+
         elif vector_type == "chroma":
+            base_collection = self._safe_name(
+                store_cfg.get("collection", "rfp_rag"),
+                max_len=32,
+            )
+            collection_name = f"{base_collection}_{collection_suffix}"
+
             self.vector_store = OpenAIChromaStore(
                 persist_dir=self.paths["vector_db_dir"],
-                collection=f"{store_cfg.get('collection', 'rfp_openai_rag')}_{self.config['experiment']['name']}",
+                collection=collection_name,
             )
+
         elif vector_type == "qdrant":
-            store_cfg["collection"] = f"{store_cfg.get('collection', 'rfp_openai_rag')}_{self.config['experiment']['name']}"
+            base_collection = self._safe_name(
+                store_cfg.get("collection", "rfp_rag"),
+                max_len=32,
+            )
+            store_cfg["collection"] = f"{base_collection}_{collection_suffix}"
+
             self.vector_store = OpenAIQdrantStore(store_cfg)
+
         elif vector_type == "supabase":
             self.vector_store = OpenAISupabaseStore(store_cfg)
+
         else:
             raise ValueError(f"Unsupported vector_db.type: {vector_type}")
 
@@ -512,16 +912,211 @@ class OpenAIRAGEvalPipeline:
             self.load_embedder()
         if self.vector_store is None:
             self.setup_vector_store()
-
+    
         force = self.config.get("embedding", {}).get("force_rebuild_index", False)
+    
         if force or not self.vector_store.exists():
+            embedding_inputs = [
+                chunk.get("embedding_text") or chunk["text"]
+                for chunk in self.chunks
+            ]
+    
             embeddings = self.embedder.encode_texts(
-                [chunk["text"] for chunk in self.chunks],
+                embedding_inputs,
                 batch_size=int(self.config.get("embedding", {}).get("batch_size", 32)),
             )
+    
             self.vector_store.build(self.chunks, embeddings)
+    
         elif hasattr(self.vector_store, "load"):
             self.vector_store.load()
+
+    def setup_hybrid_search(self) -> None:
+        """
+        BM25 인덱스를 준비합니다.
+        retrieval.hybrid.enabled=true일 때만 사용합니다.
+        """
+        retrieval_cfg = self.config.get("retrieval", {})
+        hybrid_cfg = retrieval_cfg.get("hybrid", {})
+
+        if not bool(hybrid_cfg.get("enabled", False)):
+            self.bm25_index = None
+            return
+
+        self.bm25_index = SimpleBM25Index(
+            chunks=self.chunks,
+            text_key=str(hybrid_cfg.get("text_key", "embedding_text")),
+            k1=float(hybrid_cfg.get("k1", 1.5)),
+            b=float(hybrid_cfg.get("b", 0.75)),
+        )
+
+    def setup_reranker(self) -> None:
+        """
+        CrossEncoder reranker를 준비합니다.
+        retrieval.reranker.enabled=true일 때만 로드합니다.
+        """
+        retrieval_cfg = self.config.get("retrieval", {})
+        reranker_cfg = retrieval_cfg.get("reranker", {})
+
+        if not bool(reranker_cfg.get("enabled", False)):
+            self.reranker = None
+            return
+
+        self.reranker = CrossEncoderReranker(
+            model_name=str(reranker_cfg.get("model_name", "upskyy/ko-reranker-8k")),
+            batch_size=int(reranker_cfg.get("batch_size", 16)),
+            max_length=int(reranker_cfg.get("max_length", 512)),
+            device=reranker_cfg.get("device"),
+        )
+
+    @staticmethod
+    def _chunk_identity(chunk: Dict[str, Any]) -> str:
+        chunk_id = chunk.get("chunk_id") or chunk.get("metadata", {}).get("chunk_id")
+        if chunk_id:
+            return str(chunk_id)
+        doc_id = chunk.get("doc_id") or chunk.get("metadata", {}).get("doc_id", "")
+        text = str(chunk.get("text", ""))[:80]
+        return f"{doc_id}:{text}"
+
+    @staticmethod
+    def _merge_chunk_fields(base: Dict[str, Any], incoming: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        dense 결과와 bm25 결과가 같은 chunk_id를 가리킬 때,
+        더 풍부한 필드를 보존하기 위한 병합 함수입니다.
+        """
+        merged = dict(base)
+
+        for key, value in incoming.items():
+            if key in {"rank", "score"}:
+                continue
+
+            if key not in merged or merged.get(key) in (None, "", [], {}):
+                merged[key] = value
+
+        base_meta = dict(merged.get("metadata") or {})
+        incoming_meta = dict(incoming.get("metadata") or {})
+
+        for key, value in incoming_meta.items():
+            if key not in base_meta or base_meta.get(key) in (None, "", [], {}):
+                base_meta[key] = value
+
+        if base_meta:
+            merged["metadata"] = base_meta
+
+        return merged
+
+    def _rrf_fuse(
+        self,
+        dense_results: List[Dict[str, Any]],
+        bm25_results: List[Dict[str, Any]],
+        candidate_k: int,
+        rrf_k: int = 60,
+        dense_weight: float = 0.7,
+        bm25_weight: float = 0.3,
+    ) -> List[Dict[str, Any]]:
+        """
+        Dense 검색 결과와 BM25 검색 결과를 Reciprocal Rank Fusion으로 결합합니다.
+        """
+        fused: Dict[str, Dict[str, Any]] = {}
+
+        def add_results(results: List[Dict[str, Any]], source: str, weight: float) -> None:
+            for default_rank, chunk in enumerate(results, start=1):
+                rank = int(chunk.get("rank") or default_rank)
+                key = self._chunk_identity(chunk)
+
+                if key not in fused:
+                    fused[key] = {
+                        "chunk": dict(chunk),
+                        "hybrid_score": 0.0,
+                    }
+                else:
+                    fused[key]["chunk"] = self._merge_chunk_fields(
+                        fused[key]["chunk"],
+                        chunk,
+                    )
+
+                fused[key]["hybrid_score"] += weight / (rrf_k + rank)
+
+                if source == "dense":
+                    fused[key]["chunk"]["dense_rank"] = rank
+                    fused[key]["chunk"]["dense_score"] = chunk.get("score")
+                elif source == "bm25":
+                    fused[key]["chunk"]["bm25_rank"] = rank
+                    fused[key]["chunk"]["bm25_score"] = chunk.get("bm25_score", chunk.get("score"))
+
+        add_results(dense_results, source="dense", weight=dense_weight)
+        add_results(bm25_results, source="bm25", weight=bm25_weight)
+
+        rows = []
+        for item in fused.values():
+            chunk = dict(item["chunk"])
+            chunk["hybrid_score"] = float(item["hybrid_score"])
+            rows.append(chunk)
+
+        rows.sort(key=lambda x: x.get("hybrid_score", 0.0), reverse=True)
+
+        rows = rows[:candidate_k]
+        for rank, chunk in enumerate(rows, start=1):
+            chunk["rank"] = rank
+
+        return rows
+
+    def retrieve(self, question: str) -> List[Dict[str, Any]]:
+        """
+        Dense / BM25 hybrid / reranker를 config에 따라 적용해 최종 검색 결과를 반환합니다.
+        """
+        retrieval_cfg = self.config.get("retrieval", {})
+
+        top_k = int(retrieval_cfg.get("top_k", 5))
+        candidate_k = int(retrieval_cfg.get("candidate_k", max(top_k, 30)))
+
+        hybrid_cfg = retrieval_cfg.get("hybrid", {})
+        use_hybrid = bool(hybrid_cfg.get("enabled", False)) and self.bm25_index is not None
+
+        dense_candidate_k = int(hybrid_cfg.get("dense_candidate_k", candidate_k))
+        bm25_candidate_k = int(hybrid_cfg.get("bm25_candidate_k", candidate_k))
+
+        rrf_k = int(hybrid_cfg.get("rrf_k", 60))
+        dense_weight = float(hybrid_cfg.get("dense_weight", 0.7))
+        bm25_weight = float(hybrid_cfg.get("bm25_weight", 0.3))
+
+        query_embedding = self.embedder.encode_query(question)
+
+        if use_hybrid:
+            dense_results = self.vector_store.search(
+                query_embedding=query_embedding,
+                top_k=dense_candidate_k,
+            )
+            bm25_results = self.bm25_index.search(
+                query=question,
+                top_k=bm25_candidate_k,
+            )
+            retrieved_candidates = self._rrf_fuse(
+                dense_results=dense_results,
+                bm25_results=bm25_results,
+                candidate_k=candidate_k,
+                rrf_k=rrf_k,
+                dense_weight=dense_weight,
+                bm25_weight=bm25_weight,
+            )
+        else:
+            retrieved_candidates = self.vector_store.search(
+                query_embedding=query_embedding,
+                top_k=candidate_k,
+            )
+
+        if self.reranker is not None:
+            retrieved = self.reranker.rerank(
+                query=question,
+                chunks=retrieved_candidates,
+                top_k=top_k,
+            )
+        else:
+            retrieved = retrieved_candidates[:top_k]
+            for rank, chunk in enumerate(retrieved, start=1):
+                chunk["rank"] = rank
+
+        return retrieved
 
     def load_generator(self) -> None:
         openai_cfg = self.config.get("openai", {})
@@ -539,8 +1134,7 @@ class OpenAIRAGEvalPipeline:
         start_total = time.perf_counter()
         start_retrieval = time.perf_counter()
         
-        query_embedding = self.embedder.encode_query(question)
-        retrieved = self.vector_store.search(query_embedding, int(self.config["retrieval"]["top_k"]))
+        retrieved = self.retrieve(question)
         retrieval_latency = time.perf_counter() - start_retrieval
         
         generation = self.generator.generate_from_retrieved_chunks(question, retrieved)
@@ -579,13 +1173,30 @@ class OpenAIRAGEvalPipeline:
 
     @staticmethod
     def _compact_chunk(chunk: Dict[str, Any]) -> Dict[str, Any]:
+        metadata = chunk.get("metadata", {}) or {}
+        section_path = chunk.get("section_path") or metadata.get("section_path", "")
+
+        if isinstance(section_path, list):
+            section_path = " > ".join(str(x) for x in section_path if x)
+
         return {
             "rank": chunk.get("rank"),
             "score": chunk.get("score"),
-            "chunk_id": chunk.get("chunk_id"),
-            "doc_id": chunk.get("doc_id"),
+            "dense_score": chunk.get("dense_score"),
+            "bm25_score": chunk.get("bm25_score"),
+            "hybrid_score": chunk.get("hybrid_score"),
+            "rerank_score": chunk.get("rerank_score"),
+            "dense_rank": chunk.get("dense_rank"),
+            "bm25_rank": chunk.get("bm25_rank"),
+            "chunk_id": chunk.get("chunk_id") or metadata.get("chunk_id"),
+            "doc_id": chunk.get("doc_id") or metadata.get("doc_id"),
+            "project_name": chunk.get("project_name") or metadata.get("project_name"),
+            "organization": chunk.get("organization") or metadata.get("organization"),
+            "section_title": chunk.get("section_title") or metadata.get("section_title"),
+            "section_id": chunk.get("section_id") or metadata.get("section_id"),
+            "section_path": section_path,
             "text": str(chunk.get("text", ""))[:1500],
-            "metadata": chunk.get("metadata", {}),
+            "metadata": metadata,
         }
 
     def run_rag_on_sample(self) -> None:
@@ -716,6 +1327,8 @@ class OpenAIRAGEvalPipeline:
         self.load_embedder()
         self.setup_vector_store()
         self.build_or_load_vector_store()
+        self.setup_hybrid_search()
+        self.setup_reranker()
         self.load_generator()
         self.run_rag_on_sample()
         return self.evaluate()
@@ -725,11 +1338,18 @@ class OpenAIRAGEvalPipeline:
             self.generator.unload()
         self.embedder = None
         self.vector_store = None
+        self.bm25_index = None
+        self.reranker = None
         gc.collect()
 
 
 def _flat_metadata(chunk: Dict[str, Any]) -> Dict[str, Any]:
     metadata = dict(chunk.get("metadata") or {})
+
+    section_path = chunk.get("section_path") or metadata.get("section_path", "")
+    if isinstance(section_path, list):
+        section_path = " > ".join(str(x) for x in section_path if x)
+
     metadata.update(
         {
             "chunk_id": str(chunk.get("chunk_id", "")),
@@ -738,9 +1358,20 @@ def _flat_metadata(chunk: Dict[str, Any]) -> Dict[str, Any]:
             "file_type": str(chunk.get("file_type") or metadata.get("file_type", "")),
             "project_name": str(chunk.get("project_name") or metadata.get("project_name", "")),
             "organization": str(chunk.get("organization") or metadata.get("organization", "")),
+            "section_id": str(chunk.get("section_id") or metadata.get("section_id", "")),
+            "section_title": str(chunk.get("section_title") or metadata.get("section_title", "")),
+            "section_path": str(section_path or ""),
+            "section_level": chunk.get("section_level") or metadata.get("section_level", ""),
+            "heading_marker": str(chunk.get("heading_marker") or metadata.get("heading_marker", "")),
+            "heading_raw": str(chunk.get("heading_raw") or metadata.get("heading_raw", "")),
         }
     )
-    return {key: value for key, value in metadata.items() if isinstance(value, (str, int, float, bool))}
+
+    return {
+        key: value
+        for key, value in metadata.items()
+        if isinstance(value, (str, int, float, bool))
+    }
 
 
 def build_openai_experiment_matrix() -> List[Dict[str, str]]:

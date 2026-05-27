@@ -291,7 +291,7 @@ class RAGEvaluator:
     def evaluate_retrieval(
         self,
         eval_rows: List[Dict[str, Any]],
-        k: int = 3
+        k: int = 5
     ) -> Dict[str, float]:
         """
         Retrieval 검색 성능을 평가합니다.
@@ -790,7 +790,7 @@ class RAGEvaluator:
     def evaluate_all(
         self,
         eval_rows: List[Dict[str, Any]],
-        k: int = 3
+        k: int = 5
     ) -> Dict[str, float]:
         """
         Retrieval, Generation, Keyword Group, Efficiency 평가를 한 번에 수행합니다.
@@ -814,7 +814,7 @@ class RAGEvaluator:
         self,
         eval_rows: List[Dict[str, Any]],
         group_key: str = "question_type",
-        k: int = 3
+        k: int = 5
     ) -> Dict[str, Dict[str, float]]:
         """
         특정 필드 기준으로 그룹별 평가를 수행합니다.
@@ -848,7 +848,7 @@ class RAGEvaluator:
     def get_retrieval_failure_cases(
         self,
         eval_rows: List[Dict[str, Any]],
-        k: int = 3
+        k: int = 5
     ) -> List[Dict[str, Any]]:
         """
         Top-K 검색 결과 안에 정답 doc_id가 없는 문항을 추출합니다.

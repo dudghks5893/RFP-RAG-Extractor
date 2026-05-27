@@ -67,7 +67,7 @@ def prepare_text_for_chunking(
 # ---------------------------------------------------------
 def split_long_text(
     text: str,
-    max_chars: int = 3000,
+    max_chars: int = 2000,
     overlap_chars: int = 300,
 ) -> List[str]:
     """
@@ -426,6 +426,13 @@ def create_fallback_chunks(
             "end_line": None,
             "split_idx": idx,
             "text": chunk_text,
+            "embedding_text": build_embedding_text(
+                chunk_text=chunk_text,
+                project_name=project_name,
+                organization=organization,
+                section_path=[],
+                section_title="",
+            ),
             "char_count": len(chunk_text),
             "char_len": len(chunk_text),
         })
@@ -436,6 +443,36 @@ def create_fallback_chunks(
 # ---------------------------------------------------------
 # Main section chunker
 # ---------------------------------------------------------
+def build_embedding_text(
+    chunk_text: str,
+    project_name: str = "",
+    organization: str = "",
+    section_path: list[str] | None = None,
+    section_title: str = "",
+) -> str:
+    section_path = section_path or []
+
+    header_parts = []
+
+    if project_name:
+        header_parts.append(f"사업명: {project_name}")
+
+    if organization:
+        header_parts.append(f"발주기관: {organization}")
+
+    if section_path:
+        header_parts.append(f"섹션경로: {' > '.join(section_path)}")
+
+    if section_title:
+        header_parts.append(f"섹션제목: {section_title}")
+
+    header = "\n".join(header_parts)
+
+    if header:
+        return f"{header}\n\n본문:\n{chunk_text.strip()}"
+
+    return chunk_text.strip()
+    
 def create_section_chunks(
     doc_id: str,
     text: str,
@@ -443,9 +480,9 @@ def create_section_chunks(
     file_type: str = "",
     project_name: str = "",
     organization: str = "",
-    max_chars: int = 3000,
-    overlap_chars: int = 300,
-    min_chars: int = 100,
+    max_chars: int = 1500,
+    overlap_chars: int = 200,
+    min_chars: int = 30,
     target_level: int = 2,
     include_deeper_level: bool = False,
     keep_heading: bool = True,
