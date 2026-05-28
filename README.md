@@ -229,7 +229,7 @@ pip install -r requirements-mac.txt
 pip install -r requirements-win.txt
 
 # 주피터 전용 설정으로 설치 (리눅스용 CUDA 커널 사용)
-pip install -r requirements-jupiter.txt
+pip install -r requirements-jupyter.txt
 
 # 시나리오 선택 실행 (예시)
 python main.py --scenario A
