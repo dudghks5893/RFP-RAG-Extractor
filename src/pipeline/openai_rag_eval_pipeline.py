@@ -18,7 +18,10 @@ from src.evaluation.evaluator import RAGEvaluator
 from src.utils.config_utils import load_yaml_config, resolve_project_path
 from src.utils.eval_dataset_utils import create_and_save_eval_sample, load_json, save_json
 from src.utils.file_utils import load_jsonl
-from src.utils.seed import set_seed
+try:
+    from src.utils.seed import set_seed
+except ImportError:
+    pass
 
 
 SUPPORTED_VECTOR_STORES = ("faiss", "chroma", "qdrant", "supabase")
