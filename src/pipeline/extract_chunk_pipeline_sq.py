@@ -53,6 +53,8 @@ from src.utils.text_cleaner import clean_extracted_text
 from src.chunking.pdf_page_chunker import (
     chunk_pdf_by_page,
     analyze_pdf_page_split_lengths,
+)
+from src.chunking.markdown_chunker import (
     chunk_hwp_or_pdf_by_markdown_hierarchy,
 )
 
@@ -911,6 +913,14 @@ class ExtractChunkPipeline:
                 "parent_child_threshold",
                 2000,
             ),
+            parent_child_enabled=chunking_cfg.get(
+                "parent_child_enabled",
+                True,
+            ),
+            child_max_chars=chunking_cfg.get(
+                "child_max_chars",
+                300,
+            ),
             conversion_dir=conversion_dir,
             keep_converted_pdf=chunking_cfg.get("keep_converted_pdf", True),
             libreoffice_timeout_sec=chunking_cfg.get(
@@ -920,6 +930,22 @@ class ExtractChunkPipeline:
             include_metadata_in_embedding_text=chunking_cfg.get(
                 "include_metadata_in_embedding_text",
                 True,
+            ),
+            enable_ocr_fallback=chunking_cfg.get(
+                "enable_ocr_fallback",
+                True,
+            ),
+            ocr_min_text_chars=chunking_cfg.get(
+                "ocr_min_text_chars",
+                40,
+            ),
+            ocr_dpi=chunking_cfg.get(
+                "ocr_dpi",
+                300,
+            ),
+            ocr_language=chunking_cfg.get(
+                "ocr_language",
+                "kor+eng",
             ),
         )
 

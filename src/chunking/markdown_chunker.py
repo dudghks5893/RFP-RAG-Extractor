@@ -46,6 +46,128 @@ def _normalize_text(text: Any) -> str:
     return text.strip()
 
 
+_HANJA_REPLACEMENTS = {
+    "第": "제",
+    "條": "조",
+    "項": "항",
+    "號": "호",
+    "章": "장",
+    "節": "절",
+    "別紙": "별지",
+    "別添": "별첨",
+    "以上": "이상",
+    "以下": "이하",
+    "未滿": "미만",
+    "內": "내",
+    "外": "외",
+    "年": "년",
+    "月": "월",
+    "日": "일",
+    "千": "천",
+    "萬": "만",
+    "億": "억",
+    "一": "일",
+    "二": "이",
+    "三": "삼",
+    "四": "사",
+    "五": "오",
+    "六": "육",
+    "七": "칠",
+    "八": "팔",
+    "九": "구",
+    "十": "십",
+    "百": "백",
+}
+
+_KOREAN_DIGITS = {
+    "영": 0,
+    "공": 0,
+    "일": 1,
+    "이": 2,
+    "삼": 3,
+    "사": 4,
+    "오": 5,
+    "육": 6,
+    "칠": 7,
+    "팔": 8,
+    "구": 9,
+}
+_KOREAN_SMALL_UNITS = {"십": 10, "백": 100, "천": 1000}
+_KOREAN_LARGE_UNITS = {"만": 10_000, "억": 100_000_000, "조": 1_000_000_000_000}
+_MONEY_UNITS = {
+    "원": 1,
+    "천원": 1_000,
+    "만원": 10_000,
+    "백만원": 1_000_000,
+    "천만원": 10_000_000,
+    "억원": 100_000_000,
+}
+
+
+def _parse_korean_number(text: str) -> int | None:
+    text = re.sub(r"\s+", "", str(text or ""))
+    total = 0
+    section = 0
+    number = 0
+    consumed = False
+
+    for char in text:
+        if char in _KOREAN_DIGITS:
+            number = _KOREAN_DIGITS[char]
+            consumed = True
+        elif char in _KOREAN_SMALL_UNITS:
+            section += (number or 1) * _KOREAN_SMALL_UNITS[char]
+            number = 0
+            consumed = True
+        elif char in _KOREAN_LARGE_UNITS:
+            total += (section + number or 1) * _KOREAN_LARGE_UNITS[char]
+            section = 0
+            number = 0
+            consumed = True
+        else:
+            return None
+
+    if not consumed:
+        return None
+
+    return total + section + number
+
+
+def _normalize_money_amounts(text: str) -> str:
+    def numeric_repl(match: re.Match) -> str:
+        number = int(match.group("number").replace(",", ""))
+        return f"{number * _MONEY_UNITS[match.group('unit')]}원"
+
+    def korean_repl(match: re.Match) -> str:
+        number = _parse_korean_number(match.group("number"))
+
+        if number is None:
+            return match.group(0)
+
+        return f"{number * _MONEY_UNITS[match.group('unit')]}원"
+
+    text = re.sub(
+        r"(?P<number>\d[\d,]*)\s*(?P<unit>억원|천만원|백만원|만원|천원|원)(?=\D|$)",
+        numeric_repl,
+        text,
+    )
+    text = re.sub(
+        r"(?P<number>[영공일이삼사오육칠팔구십백천만억조]+)\s*(?P<unit>억원|천만원|백만원|만원|천원|원)(?=\D|$)",
+        korean_repl,
+        text,
+    )
+    return text
+
+
+def _clean_markdown_text(text: Any) -> str:
+    text = clean_extracted_text(str(text or ""))
+
+    for source, target in sorted(_HANJA_REPLACEMENTS.items(), key=lambda item: len(item[0]), reverse=True):
+        text = text.replace(source, target)
+
+    return _normalize_money_amounts(text)
+
+
 def _extract_pdf_pages_with_pymupdf(pdf_path: str | Path) -> List[Dict[str, Any]]:
     """
     PyMuPDF를 사용해 PDF를 페이지별로 텍스트 추출합니다.
@@ -602,7 +724,7 @@ def _convert_office_to_pdf_with_libreoffice(
 
 
 def _cell_to_markdown(value: Any) -> str:
-    text = _normalize_text(value)
+    text = _clean_markdown_text(value)
     text = text.replace("\n", "<br>")
     text = text.replace("|", "\\|")
     return text
@@ -641,6 +763,10 @@ def _table_to_markdown(table: List[List[Any]]) -> str:
 
 def _extract_pdf_pages_as_markdown_with_pdfplumber(
     pdf_path: str | Path,
+    enable_ocr_fallback: bool = True,
+    ocr_min_text_chars: int = 40,
+    ocr_dpi: int = 300,
+    ocr_language: str = "kor+eng",
 ) -> List[Dict[str, Any]]:
     try:
         import pdfplumber
@@ -659,7 +785,7 @@ def _extract_pdf_pages_as_markdown_with_pdfplumber(
 
     with pdfplumber.open(str(pdf_path)) as pdf:
         for page_idx, page in enumerate(pdf.pages, start=1):
-            text = clean_extracted_text(page.extract_text() or "")
+            text = _clean_markdown_text(page.extract_text() or "")
 
             table_markdowns: List[str] = []
 
@@ -669,15 +795,74 @@ def _extract_pdf_pages_as_markdown_with_pdfplumber(
                 if markdown_table:
                     table_markdowns.append(f"표 {table_idx}\n{markdown_table}")
 
+            ocr_used = False
+
+            if (
+                enable_ocr_fallback
+                and len(text) < ocr_min_text_chars
+                and not table_markdowns
+            ):
+                ocr_text = _extract_pdf_page_text_with_pymupdf_ocr(
+                    pdf_path=pdf_path,
+                    page_no=page_idx,
+                    dpi=ocr_dpi,
+                    language=ocr_language,
+                )
+
+                if len(ocr_text) > len(text):
+                    text = ocr_text
+                    ocr_used = True
+
             parts = [part for part in [text, *table_markdowns] if _normalize_text(part)]
 
             pages.append({
                 "page_no": page_idx,
                 "text": "\n\n".join(parts).strip(),
                 "table_count": len(table_markdowns),
+                "ocr_used": ocr_used,
             })
 
     return pages
+
+
+def _extract_pdf_page_text_with_pymupdf_ocr(
+    pdf_path: str | Path,
+    page_no: int,
+    dpi: int = 300,
+    language: str = "kor+eng",
+) -> str:
+    """
+    Optional Hi-Res OCR fallback.
+
+    No Python OCR dependency is required. This uses PyMuPDF's OCR bridge only
+    when the installed PyMuPDF supports it and Tesseract is available on the
+    machine.
+    """
+    try:
+        import fitz
+    except ImportError:
+        return ""
+
+    try:
+        with fitz.open(pdf_path) as doc:
+            if page_no < 1 or page_no > len(doc):
+                return ""
+
+            page = doc[page_no - 1]
+
+            if not hasattr(page, "get_textpage_ocr"):
+                return ""
+
+            textpage = page.get_textpage_ocr(
+                flags=0,
+                language=language,
+                dpi=int(dpi),
+                full=True,
+            )
+            text = page.get_text("text", textpage=textpage, sort=True) or ""
+            return _clean_markdown_text(text)
+    except Exception:
+        return ""
 
 
 def _looks_like_markdown_table_line(line: str) -> bool:
@@ -893,6 +1078,8 @@ def _build_markdown_hierarchy_chunks(
     overlap_chars: int = 150,
     min_chars: int = 30,
     parent_child_threshold: int = 2000,
+    parent_child_enabled: bool = True,
+    child_max_chars: int = 300,
     include_metadata_in_embedding_text: bool = True,
     converted_pdf_path: str | Path | None = None,
 ) -> List[Dict[str, Any]]:
@@ -901,20 +1088,21 @@ def _build_markdown_hierarchy_chunks(
     source_path = Path(source_path)
 
     for section_idx, section in enumerate(sections):
-        section_text = _normalize_text(section.get("text", ""))
+        section_text = _clean_markdown_text(section.get("text", ""))
 
         if len(section_text) < min_chars:
             continue
 
-        is_parent_child = len(section_text) > parent_child_threshold
+        is_parent_child = parent_child_enabled and len(section_text) > parent_child_threshold
+        effective_max_chars = child_max_chars if is_parent_child else max_chars
         split_texts = _split_text_table_aware(
             text=section_text,
-            max_chars=max_chars if is_parent_child else max_chars,
+            max_chars=effective_max_chars,
             overlap_chars=overlap_chars,
         )
 
         for split_idx, chunk_text in enumerate(split_texts):
-            chunk_text = _normalize_text(chunk_text)
+            chunk_text = _clean_markdown_text(chunk_text)
 
             if len(chunk_text) < min_chars:
                 continue
@@ -968,6 +1156,8 @@ def _build_markdown_hierarchy_chunks(
             if is_parent_child:
                 metadata["parent_context"] = section_text
 
+            llm_text = section_text if is_parent_child else chunk_text
+
             chunks.append({
                 "doc_id": str(doc_id),
                 "chunk_id": chunk_id,
@@ -990,7 +1180,9 @@ def _build_markdown_hierarchy_chunks(
                 ],
                 "section_level": section.get("section_level", 0),
                 "split_idx": split_idx,
-                "text": chunk_text,
+                "text": llm_text,
+                "child_text": chunk_text if is_parent_child else "",
+                "parent_text": section_text if is_parent_child else "",
                 "embedding_text": embedding_text,
                 "metadata": metadata,
                 "chunking_method": "hwp_pdf_markdown_hierarchy",
@@ -1000,8 +1192,8 @@ def _build_markdown_hierarchy_chunks(
                     else "hwp_pdf_markdown_hierarchy"
                 ),
                 "chunk_char_len": len(chunk_text),
-                "char_count": len(chunk_text),
-                "char_len": len(chunk_text),
+                "char_count": len(llm_text),
+                "char_len": len(llm_text),
             })
 
             global_chunk_index += 1
@@ -1020,10 +1212,16 @@ def chunk_hwp_or_pdf_by_markdown_hierarchy(
     overlap_chars: int = 150,
     min_chars: int = 30,
     parent_child_threshold: int = 2000,
+    parent_child_enabled: bool = True,
+    child_max_chars: int = 300,
     conversion_dir: str | Path | None = None,
     keep_converted_pdf: bool = False,
     libreoffice_timeout_sec: int = 180,
     include_metadata_in_embedding_text: bool = True,
+    enable_ocr_fallback: bool = True,
+    ocr_min_text_chars: int = 40,
+    ocr_dpi: int = 300,
+    ocr_language: str = "kor+eng",
 ) -> List[Dict[str, Any]]:
     """
     HWP/PDF를 표 보존형 PDF 파싱 결과로 정규화한 뒤 마크다운 계층 구조로 청킹합니다.
@@ -1063,7 +1261,13 @@ def chunk_hwp_or_pdf_by_markdown_hierarchy(
                 f"file_path={file_path}"
             )
 
-        pages = _extract_pdf_pages_as_markdown_with_pdfplumber(pdf_path)
+        pages = _extract_pdf_pages_as_markdown_with_pdfplumber(
+            pdf_path,
+            enable_ocr_fallback=enable_ocr_fallback,
+            ocr_min_text_chars=ocr_min_text_chars,
+            ocr_dpi=ocr_dpi,
+            ocr_language=ocr_language,
+        )
         markdown_lines = _pages_to_clause_markdown_lines(pages)
         sections = _split_markdown_lines_into_sections(markdown_lines)
 
@@ -1079,6 +1283,8 @@ def chunk_hwp_or_pdf_by_markdown_hierarchy(
             overlap_chars=overlap_chars,
             min_chars=min_chars,
             parent_child_threshold=parent_child_threshold,
+            parent_child_enabled=parent_child_enabled,
+            child_max_chars=child_max_chars,
             include_metadata_in_embedding_text=include_metadata_in_embedding_text,
             converted_pdf_path=converted_pdf_path or (
                 pdf_path if suffix == ".pdf" else None
@@ -1095,6 +1301,8 @@ def analyze_markdown_hierarchy_split_lengths(
     overlap_chars: int = 150,
     min_chars: int = 30,
     parent_child_threshold: int = 2000,
+    parent_child_enabled: bool = True,
+    child_max_chars: int = 300,
     conversion_dir: str | Path | None = None,
     keep_converted_pdf: bool = False,
     libreoffice_timeout_sec: int = 180,
@@ -1106,6 +1314,8 @@ def analyze_markdown_hierarchy_split_lengths(
         overlap_chars=overlap_chars,
         min_chars=min_chars,
         parent_child_threshold=parent_child_threshold,
+        parent_child_enabled=parent_child_enabled,
+        child_max_chars=child_max_chars,
         conversion_dir=conversion_dir,
         keep_converted_pdf=keep_converted_pdf,
         libreoffice_timeout_sec=libreoffice_timeout_sec,
