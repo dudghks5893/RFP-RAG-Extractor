@@ -34,9 +34,13 @@ from src.utils.seed import set_seed
 from src.extractors import extract_text_by_file_type
 from src.utils.text_cleaner import clean_extracted_text
 
-from src.chunking.pdf_page_chunker import (
-    chunk_pdf_by_page,
-    analyze_pdf_page_split_lengths,
+# from src.chunking.pdf_page_chunker import (
+    # chunk_pdf_by_page as create_chunks
+#     analyze_pdf_page_split_lengths,
+# )
+
+from src.chunking.subheading_chunker import (
+    create_section_chunks as create_chunks
 )
 
 
@@ -468,13 +472,13 @@ class ExtractChunkPipeline:
                 )
 
             # 5. 최종 청킹 전 split 길이 통계 계산
-            pre_chunk_stats = analyze_pdf_page_split_lengths(
-                pdf_path=file_path,
-                max_chars=chunking_cfg.get("max_chars", 3000),
-                overlap_chars=chunking_cfg.get("overlap_chars", 300),
-                min_chars=chunking_cfg.get("min_chars", 500),
-                merge_short_pages=chunking_cfg.get("merge_short_pages", True),
-            )
+            # pre_chunk_stats = analyze_pdf_page_split_lengths(
+            #     pdf_path=file_path,
+            #     max_chars=chunking_cfg.get("max_chars", 3000),
+            #     overlap_chars=chunking_cfg.get("overlap_chars", 300),
+            #     min_chars=chunking_cfg.get("min_chars", 500),
+            #     merge_short_pages=chunking_cfg.get("merge_short_pages", True),
+            # )
 
             self.pre_chunk_stats_logs.append({
                 "doc_id": doc_id,
@@ -505,8 +509,8 @@ class ExtractChunkPipeline:
                     "split_char_len": split_len,
                 })
 
-            # 6. PDF page 기반 청킹 수행
-            chunks = chunk_pdf_by_page(
+            
+            chunks = create_chunks(
                 doc_id=doc_id,
                 pdf_path=file_path,
                 file_name=row.get(file_name_col, ""),
@@ -522,6 +526,24 @@ class ExtractChunkPipeline:
                     True,
                 ),
             )
+            
+            # 6. PDF page 기반 청킹 수행
+            # chunks = create_chunks(
+            #     doc_id=doc_id,
+            #     pdf_path=file_path,
+            #     file_name=row.get(file_name_col, ""),
+            #     file_type=row.get(file_type_col, "pdf"),
+            #     project_name=row.get(project_name_col, ""),
+            #     organization=row.get(organization_col, ""),
+            #     max_chars=chunking_cfg.get("max_chars", 3000),
+            #     overlap_chars=chunking_cfg.get("overlap_chars", 300),
+            #     min_chars=chunking_cfg.get("min_chars", 500),
+            #     merge_short_pages=chunking_cfg.get("merge_short_pages", True),
+            #     include_metadata_in_embedding_text=chunking_cfg.get(
+            #         "include_metadata_in_embedding_text",
+            #         True,
+            #     ),
+            # )
 
             page_count = pre_chunk_stats.get("num_pages", 0)
 
