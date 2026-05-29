@@ -1,22 +1,33 @@
 # src/pipeline/extract_chunk_pipeline.py
 #
-# 원본 PDF 파일을 직접 읽어서 텍스트 추출, 정제, PDF page 기반 청킹을 수행하는 파이프라인입니다.
+# 원본 문서를 읽어서 텍스트 추출, 정제, 청킹을 수행하는 파이프라인입니다.
+#
+# 지원 전략:
+# 1. chunking.strategy: pdf_page
+#    - PDF 파일만 대상으로 페이지 기반 청킹
+#    - data/raw/v2 + data_list_pdf.csv 사용 권장
+#
+# 2. chunking.strategy: section
+#    - PDF/HWP/HWPX/DOCX/DOC/TXT 등 원본 문서에서 텍스트 추출 후 section/subheading 기반 청킹
+#    - data/raw + data_list.csv 사용 가능
 #
 # 주요 흐름:
 # 1. YAML config 로드
 # 2. data_list.csv 로드
-# 3. data/raw/v2에서 PDF 파일 매칭
-# 4. PDF 직접 텍스트 추출
+# 3. raw_dir에서 파일 매칭
+# 4. 파일 타입별 텍스트 추출
 # 5. 텍스트 정제본 저장
-# 6. PDF page 기반 청킹 수행
-# 7. section_chunks.jsonl 저장
-# 8. 처리 로그 CSV 저장
-# 9. 청킹 전 split 길이 통계 CSV 저장
+# 6. chunking.strategy에 따라 청킹 수행
+# 7. embedding_text 공통 보강
+# 8. section_chunks.jsonl 저장
+# 9. 처리 로그 CSV 저장
+# 10. 청킹 전 split 길이 통계 CSV 저장
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Callable
+import inspect
 import re
 import unicodedata
 
@@ -34,15 +45,26 @@ from src.utils.seed import set_seed
 from src.extractors import extract_text_by_file_type
 from src.utils.text_cleaner import clean_extracted_text
 
+# =========================================================
+# Chunker imports
+# =========================================================
+# PDF page 기반 청킹용입니다.
+# chunking.strategy: pdf_page 일 때 사용합니다.
 from src.chunking.pdf_page_chunker import (
     chunk_pdf_by_page,
     analyze_pdf_page_split_lengths,
 )
 
+# 기존 section/subheading 기반 청킹용입니다.
+# chunking.strategy: section 일 때 사용합니다.
+from src.chunking.subheading_chunker import (
+    create_section_chunks as chunk_sections_by_subheading,
+)
+
 
 class ExtractChunkPipeline:
     """
-    원본 PDF 파일에서 텍스트를 추출하고 PDF page 기반 청킹을 수행하는 파이프라인입니다.
+    원본 문서에서 텍스트를 추출하고 chunking.strategy에 따라 청킹을 수행하는 파이프라인입니다.
 
     Parameters
     ----------
@@ -56,6 +78,19 @@ class ExtractChunkPipeline:
     project_name:
         프로젝트 루트 폴더 이름입니다.
     """
+
+    SUPPORTED_SECTION_EXTENSIONS = {
+        ".pdf",
+        ".hwp",
+        ".hwpx",
+        ".docx",
+        ".doc",
+        ".txt",
+    }
+
+    SUPPORTED_PDF_PAGE_EXTENSIONS = {
+        ".pdf",
+    }
 
     def __init__(
         self,
@@ -173,6 +208,43 @@ class ExtractChunkPipeline:
 
         print("=========================================")
 
+    def get_chunking_strategy(self) -> str:
+        """
+        현재 chunking.strategy 값을 반환합니다.
+
+        지원:
+        - pdf_page
+        - section
+        - subheading
+        """
+        return str(
+            self.config.get("chunking", {}).get("strategy", "pdf_page")
+        ).strip().lower()
+
+    def get_candidate_extensions(self) -> set[str]:
+        """
+        chunking.strategy에 따라 raw_dir에서 찾을 파일 확장자 집합을 반환합니다.
+
+        pdf_page:
+            PDF page 기반 청킹이므로 .pdf만 대상으로 합니다.
+
+        section/subheading:
+            원본 문서 직접 텍스트 추출 후 section 청킹이므로
+            PDF/HWP/HWPX/DOCX/DOC/TXT를 대상으로 합니다.
+        """
+        strategy = self.get_chunking_strategy()
+
+        if strategy == "pdf_page":
+            return self.SUPPORTED_PDF_PAGE_EXTENSIONS
+
+        if strategy in {"section", "subheading"}:
+            return self.SUPPORTED_SECTION_EXTENSIONS
+
+        raise ValueError(
+            f"지원하지 않는 chunking.strategy입니다: {strategy}. "
+            "사용 가능 값: pdf_page, section"
+        )
+
     # ---------------------------------------------------------
     # File name matching
     # ---------------------------------------------------------
@@ -216,7 +288,7 @@ class ExtractChunkPipeline:
 
     def find_raw_file(self, file_name: str) -> Optional[Path]:
         """
-        raw_dir 하위에서 data_list.csv의 파일명에 해당하는 PDF 파일을 찾습니다.
+        raw_dir 하위에서 data_list.csv의 파일명에 해당하는 원본 파일을 찾습니다.
 
         매칭 순서:
         1. 파일명 완전 일치
@@ -224,18 +296,25 @@ class ExtractChunkPipeline:
         3. stem 정규화 후 일치
         4. stem 포함 관계
 
-        현재 v2 PDF 데이터셋 기준으로 PDF 파일만 대상으로 합니다.
+        chunking.strategy에 따라 후보 확장자가 달라집니다.
+
+        - pdf_page:
+          .pdf만 찾습니다.
+
+        - section/subheading:
+          .pdf, .hwp, .hwpx, .docx, .doc, .txt를 찾습니다.
         """
         if file_name is None or pd.isna(file_name):
             return None
 
         file_name = str(file_name).strip()
         raw_dir = self.paths["raw_dir"]
+        candidate_extensions = self.get_candidate_extensions()
 
         raw_files = [
             path
             for path in raw_dir.rglob("*")
-            if path.is_file() and path.suffix.lower() == ".pdf"
+            if path.is_file() and path.suffix.lower() in candidate_extensions
         ]
 
         target_name_norm = self.normalize_file_name(file_name)
@@ -339,6 +418,44 @@ class ExtractChunkPipeline:
 
         return self.data_list
 
+    # ---------------------------------------------------------
+    # Logging helpers
+    # ---------------------------------------------------------
+    def _append_process_log(
+        self,
+        row: pd.Series,
+        doc_id: str,
+        file_path: Any,
+        status: str,
+        raw_text_len: int = 0,
+        clean_text_len: int = 0,
+        num_sections: int = 0,
+        num_pages: int = 0,
+        num_chunks: int = 0,
+        error: str = "",
+    ) -> None:
+        """
+        처리 로그 row를 추가합니다.
+        """
+        columns = self.extract_cfg.get("columns", {})
+
+        file_name_col = columns.get("file_name", "파일명")
+        file_type_col = columns.get("file_type", "파일형식")
+
+        self.process_logs.append({
+            "doc_id": doc_id,
+            "file_name": row.get(file_name_col),
+            "file_type": row.get(file_type_col),
+            "file_path": str(file_path),
+            "status": status,
+            "raw_text_len": raw_text_len,
+            "clean_text_len": clean_text_len,
+            "num_sections": num_sections,
+            "num_pages": num_pages,
+            "num_chunks": num_chunks,
+            "error": error,
+        })
+
     def _append_empty_pre_chunk_stats(
         self,
         row: pd.Series,
@@ -349,12 +466,47 @@ class ExtractChunkPipeline:
         파일 없음/처리 실패 시에도 pre_chunk 통계 CSV 컬럼이 유지되도록
         기본값 row를 추가합니다.
         """
+        self._append_pre_chunk_stats_from_lengths(
+            row=row,
+            doc_id=doc_id,
+            clean_text_len=clean_text_len,
+            chunking_strategy=self.get_chunking_strategy(),
+            lengths=[],
+            num_sections=0,
+            num_pages=0,
+        )
+
+    def _append_pre_chunk_stats_from_lengths(
+        self,
+        row: pd.Series,
+        doc_id: str,
+        clean_text_len: int,
+        chunking_strategy: str,
+        lengths: List[int],
+        num_sections: int = 0,
+        num_pages: int = 0,
+    ) -> None:
+        """
+        split/chunk 길이 목록을 기반으로 pre_chunk 통계를 추가합니다.
+        """
         columns = self.extract_cfg.get("columns", {})
 
         file_name_col = columns.get("file_name", "파일명")
         file_type_col = columns.get("file_type", "파일형식")
         project_name_col = columns.get("project_name", "사업명")
         organization_col = columns.get("organization", "발주 기관")
+
+        if lengths:
+            series = pd.Series(lengths)
+            min_len = int(series.min())
+            max_len = int(series.max())
+            mean_len = float(series.mean())
+            median_len = float(series.median())
+        else:
+            min_len = 0
+            max_len = 0
+            mean_len = 0.0
+            median_len = 0.0
 
         self.pre_chunk_stats_logs.append({
             "doc_id": doc_id,
@@ -363,42 +515,298 @@ class ExtractChunkPipeline:
             "project_name": row.get(project_name_col),
             "organization": row.get(organization_col),
             "clean_text_len": clean_text_len,
-            "chunking_strategy": self.chunking_cfg.get("strategy", "pdf_page"),
-            "num_sections_pre": 0,
-            "num_pages_pre": 0,
-            "pre_chunk_count": 0,
-            "pre_chunk_min_chars": 0,
-            "pre_chunk_max_chars": 0,
-            "pre_chunk_mean_chars": 0.0,
-            "pre_chunk_median_chars": 0.0,
+            "chunking_strategy": chunking_strategy,
+            "num_sections_pre": num_sections,
+            "num_pages_pre": num_pages,
+            "pre_chunk_count": len(lengths),
+            "pre_chunk_min_chars": min_len,
+            "pre_chunk_max_chars": max_len,
+            "pre_chunk_mean_chars": mean_len,
+            "pre_chunk_median_chars": median_len,
         })
 
-    # ---------------------------------------------------------
-    # Main extraction/chunking
-    # ---------------------------------------------------------
-    def process_single_row(self, row: pd.Series) -> List[Dict[str, Any]]:
+        for split_idx, split_len in enumerate(lengths):
+            self.pre_chunk_length_rows.append({
+                "doc_id": doc_id,
+                "file_name": row.get(file_name_col),
+                "file_type": row.get(file_type_col),
+                "project_name": row.get(project_name_col),
+                "organization": row.get(organization_col),
+                "chunking_strategy": chunking_strategy,
+                "split_index": split_idx,
+                "split_char_len": split_len,
+            })
+
+    @staticmethod
+    def _get_section_count(chunks: List[Dict[str, Any]]) -> int:
         """
-        data_list의 한 row에 대해 텍스트 추출, 정제, PDF page 기반 청킹을 수행합니다.
-
-        처리 순서:
-        1. 파일 존재 여부 확인
-        2. PDF 직접 텍스트 추출
-        3. 공통 텍스트 정제
-        4. 추출/정제 텍스트 저장
-        5. PDF page 기반 청킹 전 split 길이 통계 계산
-        6. PDF page 기반 청킹 수행
-        7. 처리 로그 기록
-
-        Parameters
-        ----------
-        row:
-            data_list의 한 행입니다.
-
-        Returns
-        -------
-        List[Dict[str, Any]]
-            생성된 chunk dict 리스트입니다.
+        chunk 목록에서 section 수를 추정합니다.
         """
+        if not chunks:
+            return 0
+
+        section_keys = set()
+
+        for chunk in chunks:
+            metadata = chunk.get("metadata", {}) or {}
+
+            key = (
+                chunk.get("section_id")
+                or chunk.get("section_title")
+                or metadata.get("section_id")
+                or metadata.get("section_title")
+                or chunk.get("page_start")
+                or "unknown"
+            )
+
+            section_keys.add(str(key))
+
+        return len(section_keys)
+
+    @staticmethod
+    def _get_page_count_from_chunks(chunks: List[Dict[str, Any]]) -> int:
+        """
+        chunk 목록에서 page_start/page_end를 기반으로 page 수를 추정합니다.
+        section 청킹에서는 보통 0입니다.
+        """
+        pages = set()
+
+        for chunk in chunks:
+            metadata = chunk.get("metadata", {}) or {}
+
+            page_start = chunk.get("page_start", metadata.get("page_start"))
+            page_end = chunk.get("page_end", metadata.get("page_end"))
+
+            if page_start is None:
+                continue
+
+            try:
+                start = int(page_start)
+                end = int(page_end) if page_end is not None else start
+            except Exception:
+                continue
+
+            for page in range(start, end + 1):
+                pages.add(page)
+
+        return len(pages)
+
+    # ---------------------------------------------------------
+    # Embedding text helpers
+    # ---------------------------------------------------------
+    def _build_embedding_text_for_chunk(
+        self,
+        chunk: Dict[str, Any],
+        file_name: str = "",
+        file_type: str = "",
+        project_name: str = "",
+        organization: str = "",
+    ) -> str:
+        """
+        검색 성능 향상을 위해 chunk 본문 앞에 metadata를 붙인 embedding 전용 텍스트를 생성합니다.
+
+        역할:
+        - text:
+          LLM prompt에 들어가는 실제 본문입니다.
+
+        - embedding_text:
+          FAISS/Vector DB에 넣을 임베딩 생성용 텍스트입니다.
+
+        section 방식에서도 기관명/사업명/파일명/섹션명이 벡터에 반영되도록 합니다.
+        pdf_page 방식에서 embedding_text가 비어 있는 경우에도 동일한 형식으로 보강합니다.
+        """
+        text = str(chunk.get("text", "") or "").strip()
+
+        metadata = chunk.get("metadata", {}) or {}
+
+        chunk_file_name = (
+            chunk.get("file_name")
+            or metadata.get("file_name")
+            or file_name
+            or ""
+        )
+
+        chunk_file_type = (
+            chunk.get("file_type")
+            or metadata.get("file_type")
+            or file_type
+            or ""
+        )
+
+        chunk_project_name = (
+            chunk.get("project_name")
+            or metadata.get("project_name")
+            or project_name
+            or ""
+        )
+
+        chunk_organization = (
+            chunk.get("organization")
+            or metadata.get("organization")
+            or organization
+            or ""
+        )
+
+        section_id = (
+            chunk.get("section_id")
+            or metadata.get("section_id")
+            or ""
+        )
+
+        section_title = (
+            chunk.get("section_title")
+            or metadata.get("section_title")
+            or ""
+        )
+
+        section_path = (
+            chunk.get("section_path")
+            or metadata.get("section_path")
+            or ""
+        )
+
+        page_start = (
+            chunk.get("page_start")
+            or metadata.get("page_start")
+            or ""
+        )
+
+        page_end = (
+            chunk.get("page_end")
+            or metadata.get("page_end")
+            or ""
+        )
+
+        if page_start and page_end:
+            page_info = (
+                str(page_start)
+                if str(page_start) == str(page_end)
+                else f"{page_start}-{page_end}"
+            )
+        elif page_start:
+            page_info = str(page_start)
+        else:
+            page_info = ""
+
+        parts = []
+
+        if chunk_organization:
+            parts.append(f"기관명: {chunk_organization}")
+
+        if chunk_project_name:
+            parts.append(f"사업명: {chunk_project_name}")
+
+        if chunk_file_name:
+            parts.append(f"파일명: {chunk_file_name}")
+
+        if chunk_file_type:
+            parts.append(f"파일형식: {chunk_file_type}")
+
+        if section_id:
+            parts.append(f"섹션ID: {section_id}")
+
+        if section_title:
+            parts.append(f"섹션명: {section_title}")
+
+        if section_path:
+            parts.append(f"섹션경로: {section_path}")
+
+        if page_info:
+            parts.append(f"페이지: {page_info}")
+
+        if parts:
+            return "\n".join(parts) + "\n\n본문:\n" + text
+
+        return text
+
+    def _add_embedding_text_to_chunks(
+        self,
+        chunks: List[Dict[str, Any]],
+        file_name: str = "",
+        file_type: str = "",
+        project_name: str = "",
+        organization: str = "",
+    ) -> List[Dict[str, Any]]:
+        """
+        chunk 목록에 embedding_text가 없거나 비어 있으면 embedding_text를 추가합니다.
+
+        chunking.include_metadata_in_embedding_text=true:
+            metadata + 본문을 embedding_text로 사용합니다.
+
+        chunking.include_metadata_in_embedding_text=false:
+            본문 text만 embedding_text로 복사합니다.
+
+        이미 chunker가 embedding_text를 생성한 경우:
+            기존 embedding_text를 유지합니다.
+        """
+        include_metadata = self.chunking_cfg.get(
+            "include_metadata_in_embedding_text",
+            True,
+        )
+
+        updated_chunks = []
+
+        for chunk in chunks:
+            chunk = dict(chunk)
+
+            current_embedding_text = str(
+                chunk.get("embedding_text", "") or ""
+            ).strip()
+
+            if current_embedding_text:
+                updated_chunks.append(chunk)
+                continue
+
+            text = str(chunk.get("text", "") or "").strip()
+
+            if include_metadata:
+                chunk["embedding_text"] = self._build_embedding_text_for_chunk(
+                    chunk=chunk,
+                    file_name=file_name,
+                    file_type=file_type,
+                    project_name=project_name,
+                    organization=organization,
+                )
+            else:
+                chunk["embedding_text"] = text
+
+            updated_chunks.append(chunk)
+
+        return updated_chunks
+
+    # ---------------------------------------------------------
+    # Chunker call helpers
+    # ---------------------------------------------------------
+    @staticmethod
+    def _call_with_supported_kwargs(
+        func: Callable,
+        kwargs: Dict[str, Any],
+    ) -> Any:
+        """
+        함수 signature에 존재하는 인자만 골라 호출합니다.
+
+        chunker 함수별로 parameter 이름이 조금 달라도 pipeline 전체가
+        바로 깨지지 않도록 하기 위한 helper입니다.
+        """
+        signature = inspect.signature(func)
+        supported_kwargs = {
+            key: value
+            for key, value in kwargs.items()
+            if key in signature.parameters
+        }
+
+        return func(**supported_kwargs)
+
+    def _create_pdf_page_chunks(
+        self,
+        row: pd.Series,
+        doc_id: str,
+        file_path: Path,
+    ) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        """
+        PDF page 기반 청킹을 수행하고 pre_chunk_stats를 반환합니다.
+        """
+        chunking_cfg = self.config.get("chunking", {})
         columns = self.extract_cfg.get("columns", {})
 
         file_name_col = columns.get("file_name", "파일명")
@@ -406,23 +814,129 @@ class ExtractChunkPipeline:
         project_name_col = columns.get("project_name", "사업명")
         organization_col = columns.get("organization", "발주 기관")
 
+        if file_path.suffix.lower() != ".pdf":
+            raise ValueError(
+                f"pdf_page 전략은 PDF 파일만 지원합니다. file_path={file_path}"
+            )
+
+        pre_chunk_stats = analyze_pdf_page_split_lengths(
+            pdf_path=file_path,
+            max_chars=chunking_cfg.get("max_chars", 3000),
+            overlap_chars=chunking_cfg.get("overlap_chars", 300),
+            min_chars=chunking_cfg.get("min_chars", 500),
+            merge_short_pages=chunking_cfg.get("merge_short_pages", True),
+        )
+
+        chunks = chunk_pdf_by_page(
+            doc_id=doc_id,
+            pdf_path=file_path,
+            file_name=row.get(file_name_col, ""),
+            file_type=row.get(file_type_col, "pdf"),
+            project_name=row.get(project_name_col, ""),
+            organization=row.get(organization_col, ""),
+            max_chars=chunking_cfg.get("max_chars", 3000),
+            overlap_chars=chunking_cfg.get("overlap_chars", 300),
+            min_chars=chunking_cfg.get("min_chars", 500),
+            merge_short_pages=chunking_cfg.get("merge_short_pages", True),
+            include_metadata_in_embedding_text=chunking_cfg.get(
+                "include_metadata_in_embedding_text",
+                True,
+            ),
+        )
+
+        chunks = self._add_embedding_text_to_chunks(
+            chunks=chunks or [],
+            file_name=row.get(file_name_col, ""),
+            file_type=row.get(file_type_col, "pdf"),
+            project_name=row.get(project_name_col, ""),
+            organization=row.get(organization_col, ""),
+        )
+
+        return chunks, pre_chunk_stats
+
+    def _create_section_chunks(
+        self,
+        row: pd.Series,
+        doc_id: str,
+        clean_text: str,
+    ) -> List[Dict[str, Any]]:
+        """
+        section/subheading 기반 청킹을 수행합니다.
+
+        현재 section 전략은 src.chunking.subheading_chunker.create_section_chunks를 사용합니다.
+        """
+        chunking_cfg = self.config.get("chunking", {})
+        columns = self.extract_cfg.get("columns", {})
+
+        file_name_col = columns.get("file_name", "파일명")
+        file_type_col = columns.get("file_type", "파일형식")
+        project_name_col = columns.get("project_name", "사업명")
+        organization_col = columns.get("organization", "발주 기관")
+
+        kwargs = {
+            "doc_id": doc_id,
+            "text": clean_text,
+            "clean_text": clean_text,
+            "file_name": row.get(file_name_col, ""),
+            "file_type": row.get(file_type_col, ""),
+            "project_name": row.get(project_name_col, ""),
+            "organization": row.get(organization_col, ""),
+            "max_chars": chunking_cfg.get("max_chars", 3000),
+            "overlap_chars": chunking_cfg.get("overlap_chars", 300),
+            "min_chars": chunking_cfg.get("min_chars", 100),
+            "merge_short_chunks": chunking_cfg.get("merge_short_chunks", True),
+            "include_metadata_in_embedding_text": chunking_cfg.get(
+                "include_metadata_in_embedding_text",
+                True,
+            ),
+        }
+
+        chunks = self._call_with_supported_kwargs(
+            func=chunk_sections_by_subheading,
+            kwargs=kwargs,
+        )
+
+        chunks = self._add_embedding_text_to_chunks(
+            chunks=chunks or [],
+            file_name=row.get(file_name_col, ""),
+            file_type=row.get(file_type_col, ""),
+            project_name=row.get(project_name_col, ""),
+            organization=row.get(organization_col, ""),
+        )
+
+        return chunks
+
+    # ---------------------------------------------------------
+    # Main extraction/chunking
+    # ---------------------------------------------------------
+    def process_single_row(self, row: pd.Series) -> List[Dict[str, Any]]:
+        """
+        data_list의 한 row에 대해 텍스트 추출, 정제, 청킹을 수행합니다.
+
+        공통 처리:
+        1. 파일 존재 여부 확인
+        2. 파일 타입별 텍스트 추출
+        3. 텍스트 정제
+        4. extracted/cleaned txt 저장
+
+        전략별 처리:
+        - pdf_page:
+          PDF page 기반 청킹
+
+        - section/subheading:
+          정제된 전체 텍스트 기반 section/subheading 청킹
+        """
         doc_id = row["doc_id"]
         file_path = row["file_path"]
 
         if file_path is None or not Path(file_path).exists():
-            self.process_logs.append({
-                "doc_id": doc_id,
-                "file_name": row.get(file_name_col),
-                "file_type": row.get(file_type_col),
-                "file_path": str(file_path),
-                "status": "file_not_found",
-                "raw_text_len": 0,
-                "clean_text_len": 0,
-                "num_sections": 0,
-                "num_pages": 0,
-                "num_chunks": 0,
-                "error": "file_path not found",
-            })
+            self._append_process_log(
+                row=row,
+                doc_id=doc_id,
+                file_path=file_path,
+                status="file_not_found",
+                error="file_path not found",
+            )
 
             self._append_empty_pre_chunk_stats(
                 row=row,
@@ -434,16 +948,9 @@ class ExtractChunkPipeline:
 
         try:
             file_path = Path(file_path)
+            chunking_strategy = self.get_chunking_strategy()
 
-            if file_path.suffix.lower() != ".pdf":
-                raise ValueError(
-                    f"pdf_page 전략은 PDF 파일만 지원합니다. file_path={file_path}"
-                )
-
-            # 1. 원본 PDF에서 전체 텍스트 추출
-            # 주의:
-            # 실제 청킹은 pdf_page_chunker에서 페이지별로 다시 추출합니다.
-            # 여기서는 기존처럼 extracted/cleaned txt 저장과 로그 산출을 위해 전체 텍스트를 추출합니다.
+            # 1. 원본 파일에서 직접 텍스트 추출
             extracted = extract_text_by_file_type(file_path)
             raw_text = extracted.get("text", "") or ""
 
@@ -457,104 +964,87 @@ class ExtractChunkPipeline:
             extracted_path.write_text(raw_text, encoding="utf-8")
             cleaned_path.write_text(clean_text, encoding="utf-8")
 
-            # 4. 청킹 설정 확인
-            chunking_cfg = self.config.get("chunking", {})
-            chunking_strategy = chunking_cfg.get("strategy", "pdf_page")
-
-            if chunking_strategy != "pdf_page":
-                raise ValueError(
-                    "현재 ExtractChunkPipeline은 pdf_page 청킹만 사용하도록 정리된 버전입니다. "
-                    f"입력된 chunking.strategy: {chunking_strategy}"
+            # 4. 전략별 청킹
+            if chunking_strategy == "pdf_page":
+                chunks, pre_chunk_stats = self._create_pdf_page_chunks(
+                    row=row,
+                    doc_id=doc_id,
+                    file_path=file_path,
                 )
 
-            # 5. 최종 청킹 전 split 길이 통계 계산
-            pre_chunk_stats = analyze_pdf_page_split_lengths(
-                pdf_path=file_path,
-                max_chars=chunking_cfg.get("max_chars", 3000),
-                overlap_chars=chunking_cfg.get("overlap_chars", 300),
-                min_chars=chunking_cfg.get("min_chars", 500),
-                merge_short_pages=chunking_cfg.get("merge_short_pages", True),
-            )
+                lengths = pre_chunk_stats.get("pre_chunk_lengths", [])
+                page_count = int(pre_chunk_stats.get("num_pages", 0))
+                section_count = page_count
 
-            self.pre_chunk_stats_logs.append({
-                "doc_id": doc_id,
-                "file_name": row.get(file_name_col),
-                "file_type": row.get(file_type_col),
-                "project_name": row.get(project_name_col),
-                "organization": row.get(organization_col),
-                "clean_text_len": len(clean_text),
-                "chunking_strategy": chunking_strategy,
-                "num_sections_pre": pre_chunk_stats.get("num_pages", 0),
-                "num_pages_pre": pre_chunk_stats.get("num_pages", 0),
-                "pre_chunk_count": pre_chunk_stats["pre_chunk_count"],
-                "pre_chunk_min_chars": pre_chunk_stats["pre_chunk_min_chars"],
-                "pre_chunk_max_chars": pre_chunk_stats["pre_chunk_max_chars"],
-                "pre_chunk_mean_chars": pre_chunk_stats["pre_chunk_mean_chars"],
-                "pre_chunk_median_chars": pre_chunk_stats["pre_chunk_median_chars"],
-            })
+                self._append_pre_chunk_stats_from_lengths(
+                    row=row,
+                    doc_id=doc_id,
+                    clean_text_len=len(clean_text),
+                    chunking_strategy=chunking_strategy,
+                    lengths=lengths,
+                    num_sections=section_count,
+                    num_pages=page_count,
+                )
 
-            for split_idx, split_len in enumerate(pre_chunk_stats["pre_chunk_lengths"]):
-                self.pre_chunk_length_rows.append({
-                    "doc_id": doc_id,
-                    "file_name": row.get(file_name_col),
-                    "file_type": row.get(file_type_col),
-                    "project_name": row.get(project_name_col),
-                    "organization": row.get(organization_col),
-                    "chunking_strategy": chunking_strategy,
-                    "split_index": split_idx,
-                    "split_char_len": split_len,
-                })
+            elif chunking_strategy in {"section", "subheading"}:
+                chunks = self._create_section_chunks(
+                    row=row,
+                    doc_id=doc_id,
+                    clean_text=clean_text,
+                )
 
-            # 6. PDF page 기반 청킹 수행
-            chunks = chunk_pdf_by_page(
+                lengths = [
+                    len(str(chunk.get("text", "") or ""))
+                    for chunk in chunks
+                ]
+
+                section_count = self._get_section_count(chunks)
+                page_count = self._get_page_count_from_chunks(chunks)
+
+                self._append_pre_chunk_stats_from_lengths(
+                    row=row,
+                    doc_id=doc_id,
+                    clean_text_len=len(clean_text),
+                    chunking_strategy=chunking_strategy,
+                    lengths=lengths,
+                    num_sections=section_count,
+                    num_pages=page_count,
+                )
+
+            else:
+                raise ValueError(
+                    f"지원하지 않는 chunking.strategy입니다: {chunking_strategy}. "
+                    "사용 가능 값: pdf_page, section"
+                )
+
+            self._append_process_log(
+                row=row,
                 doc_id=doc_id,
-                pdf_path=file_path,
-                file_name=row.get(file_name_col, ""),
-                file_type=row.get(file_type_col, "pdf"),
-                project_name=row.get(project_name_col, ""),
-                organization=row.get(organization_col, ""),
-                max_chars=chunking_cfg.get("max_chars", 3000),
-                overlap_chars=chunking_cfg.get("overlap_chars", 300),
-                min_chars=chunking_cfg.get("min_chars", 500),
-                merge_short_pages=chunking_cfg.get("merge_short_pages", True),
-                include_metadata_in_embedding_text=chunking_cfg.get(
-                    "include_metadata_in_embedding_text",
-                    True,
-                ),
+                file_path=file_path,
+                status="success" if chunks else "no_chunks_created",
+                raw_text_len=len(raw_text),
+                clean_text_len=len(clean_text),
+                num_sections=section_count,
+                num_pages=page_count,
+                num_chunks=len(chunks),
+                error="",
             )
-
-            page_count = pre_chunk_stats.get("num_pages", 0)
-
-            self.process_logs.append({
-                "doc_id": doc_id,
-                "file_name": row.get(file_name_col),
-                "file_type": row.get(file_type_col),
-                "file_path": str(file_path),
-                "status": "success" if chunks else "no_chunks_created",
-                "raw_text_len": len(raw_text),
-                "clean_text_len": len(clean_text),
-                "num_sections": page_count,
-                "num_pages": page_count,
-                "num_chunks": len(chunks),
-                "error": "",
-            })
 
             return chunks
 
         except Exception as e:
-            self.process_logs.append({
-                "doc_id": doc_id,
-                "file_name": row.get(file_name_col),
-                "file_type": row.get(file_type_col),
-                "file_path": str(file_path),
-                "status": "failed",
-                "raw_text_len": 0,
-                "clean_text_len": 0,
-                "num_sections": 0,
-                "num_pages": 0,
-                "num_chunks": 0,
-                "error": repr(e),
-            })
+            self._append_process_log(
+                row=row,
+                doc_id=doc_id,
+                file_path=file_path,
+                status="failed",
+                raw_text_len=0,
+                clean_text_len=0,
+                num_sections=0,
+                num_pages=0,
+                num_chunks=0,
+                error=repr(e),
+            )
 
             self._append_empty_pre_chunk_stats(
                 row=row,
@@ -730,6 +1220,8 @@ class ExtractChunkPipeline:
                 "project_name": chunk.get("project_name"),
                 "organization": chunk.get("organization"),
                 "section_title": chunk.get("section_title"),
+                "section_id": chunk.get("section_id"),
+                "section_path": chunk.get("section_path"),
                 "page_start": chunk.get("page_start"),
                 "page_end": chunk.get("page_end"),
                 "page_chunk_index": chunk.get("page_chunk_index"),
