@@ -239,7 +239,7 @@ class ExtractChunkPipeline:
 
         if strategy in {"section", "subheading"}:
             return self.SUPPORTED_SECTION_EXTENSIONS
-
+        
         raise ValueError(
             f"지원하지 않는 chunking.strategy입니다: {strategy}. "
             "사용 가능 값: pdf_page, section"
