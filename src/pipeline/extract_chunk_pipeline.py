@@ -1,19 +1,17 @@
 # src/pipeline/extract_chunk_pipeline.py
 #
-# 원본 PDF/HWP/DOCX 파일을 직접 읽어서 텍스트 추출, 정제, 청킹을 수행하는 파이프라인입니다.
-#
-# 이 파이프라인은 notebooks/01_extract_clean_chunk.ipynb에서 검증한 흐름을
-# 재사용 가능한 Python 모듈로 옮긴 것입니다.
+# 원본 PDF 파일을 직접 읽어서 텍스트 추출, 정제, PDF page 기반 청킹을 수행하는 파이프라인입니다.
 #
 # 주요 흐름:
 # 1. YAML config 로드
 # 2. data_list.csv 로드
-# 3. data/raw에서 원본 파일 매칭
-# 4. PDF/HWP/DOCX 직접 텍스트 추출
-# 5. 텍스트 정제
-# 6. 목차 기반 계층 청킹
+# 3. data/raw/v2에서 PDF 파일 매칭
+# 4. PDF 직접 텍스트 추출
+# 5. 텍스트 정제본 저장
+# 6. PDF page 기반 청킹 수행
 # 7. section_chunks.jsonl 저장
 # 8. 처리 로그 CSV 저장
+# 9. 청킹 전 split 길이 통계 CSV 저장
 
 from __future__ import annotations
 
@@ -36,25 +34,15 @@ from src.utils.seed import set_seed
 from src.extractors import extract_text_by_file_type
 from src.utils.text_cleaner import clean_extracted_text
 
-# 기우님의 청킹 방식
-# from src.chunking.toc_chunker import (
-#     preprocess_text_for_toc_chunking,
-#     create_toc_based_chunks as create_chunks,
-# )
-
-# 성택님의 청킹 방식
-from src.chunking.subheading_chunker import (
-    create_section_chunks as create_chunks
+from src.chunking.pdf_page_chunker import (
+    chunk_pdf_by_page,
+    analyze_pdf_page_split_lengths,
 )
 
-# 기존 베이스라인 청킹 방식
-# from src.chunking.section_chunker import (
-#    create_section_chunks as create_chunks
-#)
 
 class ExtractChunkPipeline:
     """
-    원본 RFP 파일에서 텍스트를 추출하고 목차 기반 청킹을 수행하는 파이프라인입니다.
+    원본 PDF 파일에서 텍스트를 추출하고 PDF page 기반 청킹을 수행하는 파이프라인입니다.
 
     Parameters
     ----------
@@ -95,13 +83,24 @@ class ExtractChunkPipeline:
                 "configs/baseline_rag.yaml에 extract 블록을 추가하세요."
             )
 
+        if "chunking" not in self.config:
+            raise KeyError(
+                "config에 top-level 'chunking' 설정이 없습니다. "
+                "configs/baseline_rag.yaml에 chunking 블록을 추가하세요."
+            )
+
         self.extract_cfg = self.config["extract"]
+        self.chunking_cfg = self.config["chunking"]
 
         self.paths: Dict[str, Path] = {}
         self.data_list: Optional[pd.DataFrame] = None
 
         self.all_chunks: List[Dict[str, Any]] = []
         self.process_logs: List[Dict[str, Any]] = []
+
+        # 정제 후, 최종 청킹 전 split 길이 통계를 저장하기 위한 로그입니다.
+        self.pre_chunk_stats_logs: List[Dict[str, Any]] = []
+        self.pre_chunk_length_rows: List[Dict[str, Any]] = []
 
         self._resolve_paths()
 
@@ -144,6 +143,15 @@ class ExtractChunkPipeline:
             cfg["process_log_path"],
         )
 
+        # 청킹 전 split 통계 저장 경로입니다.
+        self.paths["pre_chunk_stats_path"] = (
+            self.paths["process_log_path"].parent / "pre_chunk_split_stats.csv"
+        )
+
+        self.paths["pre_chunk_lengths_path"] = (
+            self.paths["process_log_path"].parent / "pre_chunk_split_lengths.csv"
+        )
+
         self.paths["extracted_dir"].mkdir(parents=True, exist_ok=True)
         self.paths["cleaned_dir"].mkdir(parents=True, exist_ok=True)
         self.paths["output_chunk_path"].parent.mkdir(parents=True, exist_ok=True)
@@ -161,7 +169,8 @@ class ExtractChunkPipeline:
             print(f"{key}: {value}")
 
         print("\nchunking config:")
-        print(self.extract_cfg.get("chunking", {}))
+        print(self.config.get("chunking", {}))
+
         print("=========================================")
 
     # ---------------------------------------------------------
@@ -171,9 +180,6 @@ class ExtractChunkPipeline:
     def normalize_file_name(name: str) -> str:
         """
         파일명 비교용 정규화 함수입니다.
-
-        raw 파일명이 NFD, data_list.csv 파일명이 NFC인 경우를 맞추기 위해
-        Unicode NFC 정규화를 적용합니다.
 
         처리:
         - Unicode NFC 정규화
@@ -210,13 +216,15 @@ class ExtractChunkPipeline:
 
     def find_raw_file(self, file_name: str) -> Optional[Path]:
         """
-        data/raw 하위에서 data_list.csv의 파일명에 해당하는 원본 파일을 찾습니다.
+        raw_dir 하위에서 data_list.csv의 파일명에 해당하는 PDF 파일을 찾습니다.
 
         매칭 순서:
         1. 파일명 완전 일치
         2. Unicode/공백/기호 정규화 후 파일명 전체 일치
         3. stem 정규화 후 일치
-        4. stem 포함 관계 + 확장자 동일
+        4. stem 포함 관계
+
+        현재 v2 PDF 데이터셋 기준으로 PDF 파일만 대상으로 합니다.
         """
         if file_name is None or pd.isna(file_name):
             return None
@@ -224,11 +232,14 @@ class ExtractChunkPipeline:
         file_name = str(file_name).strip()
         raw_dir = self.paths["raw_dir"]
 
-        raw_files = [path for path in raw_dir.rglob("*") if path.is_file()]
+        raw_files = [
+            path
+            for path in raw_dir.rglob("*")
+            if path.is_file() and path.suffix.lower() == ".pdf"
+        ]
 
         target_name_norm = self.normalize_file_name(file_name)
         target_stem_norm = self.normalize_file_name(Path(file_name).stem)
-        target_suffix = Path(file_name).suffix.lower()
 
         # 1. 파일명 완전 일치
         for path in raw_files:
@@ -245,14 +256,11 @@ class ExtractChunkPipeline:
             if self.normalize_file_name(path.stem) == target_stem_norm:
                 return path
 
-        # 4. stem 포함 관계 + 확장자 동일
+        # 4. stem 포함 관계
         for path in raw_files:
             path_stem_norm = self.normalize_file_name(path.stem)
-            path_suffix = path.suffix.lower()
 
-            suffix_ok = not target_suffix or path_suffix == target_suffix
-
-            if suffix_ok and target_stem_norm:
+            if target_stem_norm:
                 if target_stem_norm in path_stem_norm or path_stem_norm in target_stem_norm:
                     return path
 
@@ -331,20 +339,54 @@ class ExtractChunkPipeline:
 
         return self.data_list
 
+    def _append_empty_pre_chunk_stats(
+        self,
+        row: pd.Series,
+        doc_id: str,
+        clean_text_len: int = 0,
+    ) -> None:
+        """
+        파일 없음/처리 실패 시에도 pre_chunk 통계 CSV 컬럼이 유지되도록
+        기본값 row를 추가합니다.
+        """
+        columns = self.extract_cfg.get("columns", {})
+
+        file_name_col = columns.get("file_name", "파일명")
+        file_type_col = columns.get("file_type", "파일형식")
+        project_name_col = columns.get("project_name", "사업명")
+        organization_col = columns.get("organization", "발주 기관")
+
+        self.pre_chunk_stats_logs.append({
+            "doc_id": doc_id,
+            "file_name": row.get(file_name_col),
+            "file_type": row.get(file_type_col),
+            "project_name": row.get(project_name_col),
+            "organization": row.get(organization_col),
+            "clean_text_len": clean_text_len,
+            "chunking_strategy": self.chunking_cfg.get("strategy", "pdf_page"),
+            "num_sections_pre": 0,
+            "num_pages_pre": 0,
+            "pre_chunk_count": 0,
+            "pre_chunk_min_chars": 0,
+            "pre_chunk_max_chars": 0,
+            "pre_chunk_mean_chars": 0.0,
+            "pre_chunk_median_chars": 0.0,
+        })
+
     # ---------------------------------------------------------
     # Main extraction/chunking
     # ---------------------------------------------------------
     def process_single_row(self, row: pd.Series) -> List[Dict[str, Any]]:
         """
-        data_list의 한 row에 대해 텍스트 추출, 정제, 청킹을 수행합니다.
+        data_list의 한 row에 대해 텍스트 추출, 정제, PDF page 기반 청킹을 수행합니다.
 
         처리 순서:
         1. 파일 존재 여부 확인
-        2. PDF/HWP/DOCX 직접 텍스트 추출
+        2. PDF 직접 텍스트 추출
         3. 공통 텍스트 정제
-        4. 목차 기반 청킹용 추가 전처리
-        5. 추출/정제 텍스트 저장
-        6. 목차 기반 계층 청킹 수행
+        4. 추출/정제 텍스트 저장
+        5. PDF page 기반 청킹 전 split 길이 통계 계산
+        6. PDF page 기반 청킹 수행
         7. 처리 로그 기록
 
         Parameters
@@ -377,57 +419,111 @@ class ExtractChunkPipeline:
                 "raw_text_len": 0,
                 "clean_text_len": 0,
                 "num_sections": 0,
+                "num_pages": 0,
                 "num_chunks": 0,
                 "error": "file_path not found",
             })
+
+            self._append_empty_pre_chunk_stats(
+                row=row,
+                doc_id=doc_id,
+                clean_text_len=0,
+            )
+
             return []
 
         try:
-            # 1. 원본 파일에서 직접 텍스트 추출
+            file_path = Path(file_path)
+
+            if file_path.suffix.lower() != ".pdf":
+                raise ValueError(
+                    f"pdf_page 전략은 PDF 파일만 지원합니다. file_path={file_path}"
+                )
+
+            # 1. 원본 PDF에서 전체 텍스트 추출
+            # 주의:
+            # 실제 청킹은 pdf_page_chunker에서 페이지별로 다시 추출합니다.
+            # 여기서는 기존처럼 extracted/cleaned txt 저장과 로그 산출을 위해 전체 텍스트를 추출합니다.
             extracted = extract_text_by_file_type(file_path)
             raw_text = extracted.get("text", "") or ""
 
             # 2. 텍스트 정제
-            # base_clean_text = clean_extracted_text(raw_text)
-
-            # 3. 목차 기반 청킹용 추가 전처리
-            # clean_text = preprocess_text_for_toc_chunking(base_clean_text)
-
-            # 기본 베이스 라인 적용 시 위 2개 주석하고 아래 코드 사용.
             clean_text = clean_extracted_text(raw_text)
 
-            # 4. 추출/정제 텍스트 저장
+            # 3. 추출/정제 텍스트 저장
             extracted_path = self.paths["extracted_dir"] / f"{doc_id}.txt"
             cleaned_path = self.paths["cleaned_dir"] / f"{doc_id}.txt"
 
             extracted_path.write_text(raw_text, encoding="utf-8")
             cleaned_path.write_text(clean_text, encoding="utf-8")
 
-            # 5. 목차 기반 계층 청킹
-            chunking_cfg = self.extract_cfg.get("chunking", {})
+            # 4. 청킹 설정 확인
+            chunking_cfg = self.config.get("chunking", {})
+            chunking_strategy = chunking_cfg.get("strategy", "pdf_page")
 
-            # 청킹 모듈 cfg 값으로 적용
-            chunks = create_chunks(
+            if chunking_strategy != "pdf_page":
+                raise ValueError(
+                    "현재 ExtractChunkPipeline은 pdf_page 청킹만 사용하도록 정리된 버전입니다. "
+                    f"입력된 chunking.strategy: {chunking_strategy}"
+                )
+
+            # 5. 최종 청킹 전 split 길이 통계 계산
+            pre_chunk_stats = analyze_pdf_page_split_lengths(
+                pdf_path=file_path,
+                max_chars=chunking_cfg.get("max_chars", 3000),
+                overlap_chars=chunking_cfg.get("overlap_chars", 300),
+                min_chars=chunking_cfg.get("min_chars", 500),
+                merge_short_pages=chunking_cfg.get("merge_short_pages", True),
+            )
+
+            self.pre_chunk_stats_logs.append({
+                "doc_id": doc_id,
+                "file_name": row.get(file_name_col),
+                "file_type": row.get(file_type_col),
+                "project_name": row.get(project_name_col),
+                "organization": row.get(organization_col),
+                "clean_text_len": len(clean_text),
+                "chunking_strategy": chunking_strategy,
+                "num_sections_pre": pre_chunk_stats.get("num_pages", 0),
+                "num_pages_pre": pre_chunk_stats.get("num_pages", 0),
+                "pre_chunk_count": pre_chunk_stats["pre_chunk_count"],
+                "pre_chunk_min_chars": pre_chunk_stats["pre_chunk_min_chars"],
+                "pre_chunk_max_chars": pre_chunk_stats["pre_chunk_max_chars"],
+                "pre_chunk_mean_chars": pre_chunk_stats["pre_chunk_mean_chars"],
+                "pre_chunk_median_chars": pre_chunk_stats["pre_chunk_median_chars"],
+            })
+
+            for split_idx, split_len in enumerate(pre_chunk_stats["pre_chunk_lengths"]):
+                self.pre_chunk_length_rows.append({
+                    "doc_id": doc_id,
+                    "file_name": row.get(file_name_col),
+                    "file_type": row.get(file_type_col),
+                    "project_name": row.get(project_name_col),
+                    "organization": row.get(organization_col),
+                    "chunking_strategy": chunking_strategy,
+                    "split_index": split_idx,
+                    "split_char_len": split_len,
+                })
+
+            # 6. PDF page 기반 청킹 수행
+            chunks = chunk_pdf_by_page(
                 doc_id=doc_id,
-                text=clean_text,
+                pdf_path=file_path,
                 file_name=row.get(file_name_col, ""),
-                file_type=row.get(file_type_col, ""),
+                file_type=row.get(file_type_col, "pdf"),
                 project_name=row.get(project_name_col, ""),
                 organization=row.get(organization_col, ""),
                 max_chars=chunking_cfg.get("max_chars", 3000),
                 overlap_chars=chunking_cfg.get("overlap_chars", 300),
-                min_chars=chunking_cfg.get("min_chars", 100),
+                min_chars=chunking_cfg.get("min_chars", 500),
+                merge_short_pages=chunking_cfg.get("merge_short_pages", True),
+                include_metadata_in_embedding_text=chunking_cfg.get(
+                    "include_metadata_in_embedding_text",
+                    True,
+                ),
             )
 
-            # section_count = len(set(chunk["section_id"] for chunk in chunks))
-            section_count = len(set(
-                chunk.get("section_id")
-                or chunk.get("section_title")
-                or chunk.get("metadata", {}).get("section_id")
-                or chunk.get("metadata", {}).get("section_title")
-                or "unknown"
-                for chunk in chunks
-            ))
+            page_count = pre_chunk_stats.get("num_pages", 0)
 
             self.process_logs.append({
                 "doc_id": doc_id,
@@ -437,7 +533,8 @@ class ExtractChunkPipeline:
                 "status": "success" if chunks else "no_chunks_created",
                 "raw_text_len": len(raw_text),
                 "clean_text_len": len(clean_text),
-                "num_sections": section_count,
+                "num_sections": page_count,
+                "num_pages": page_count,
                 "num_chunks": len(chunks),
                 "error": "",
             })
@@ -454,9 +551,17 @@ class ExtractChunkPipeline:
                 "raw_text_len": 0,
                 "clean_text_len": 0,
                 "num_sections": 0,
+                "num_pages": 0,
                 "num_chunks": 0,
                 "error": repr(e),
             })
+
+            self._append_empty_pre_chunk_stats(
+                row=row,
+                doc_id=doc_id,
+                clean_text_len=0,
+            )
+
             return []
 
     def run(self) -> Dict[str, Any]:
@@ -469,8 +574,12 @@ class ExtractChunkPipeline:
             {
                 "chunk_path": Path,
                 "process_log_path": Path,
+                "pre_chunk_stats_path": Path,
+                "pre_chunk_lengths_path": Path,
                 "num_chunks": int,
                 "process_log_df": pd.DataFrame,
+                "pre_chunk_stats_df": pd.DataFrame,
+                "pre_chunk_lengths_df": pd.DataFrame,
                 "chunk_stats_df": pd.DataFrame,
                 "skipped": bool
             }
@@ -480,10 +589,12 @@ class ExtractChunkPipeline:
         set_seed(self.config["experiment"].get("random_seed", 42))
 
         output_chunk_path = self.paths["output_chunk_path"]
-        force_rebuild = self.extract_cfg.get("force_rebuild_chunks", True)
+
+        chunking_cfg = self.config.get("chunking", {})
+        force_rebuild = chunking_cfg.get("force_rebuild_chunks", True)
 
         if output_chunk_path.exists() and not force_rebuild:
-            print("기존 청크 파일이 존재하며 force_rebuild_chunks=false 입니다.")
+            print("기존 청크 파일이 존재하며 chunking.force_rebuild_chunks=false 입니다.")
             print("청킹을 재실행하지 않습니다:", output_chunk_path)
 
             return {
@@ -496,6 +607,8 @@ class ExtractChunkPipeline:
 
         self.all_chunks = []
         self.process_logs = []
+        self.pre_chunk_stats_logs = []
+        self.pre_chunk_length_rows = []
 
         for _, row in progress_iter(
             self.data_list.iterrows(),
@@ -521,9 +634,27 @@ class ExtractChunkPipeline:
             encoding="utf-8-sig",
         )
 
+        # 문서별 pre-chunk split 통계 저장
+        pre_chunk_stats_df = pd.DataFrame(self.pre_chunk_stats_logs)
+        pre_chunk_stats_df.to_csv(
+            self.paths["pre_chunk_stats_path"],
+            index=False,
+            encoding="utf-8-sig",
+        )
+
+        # split 하나하나의 길이 상세 저장
+        pre_chunk_lengths_df = pd.DataFrame(self.pre_chunk_length_rows)
+        pre_chunk_lengths_df.to_csv(
+            self.paths["pre_chunk_lengths_path"],
+            index=False,
+            encoding="utf-8-sig",
+        )
+
         print("section_chunks 저장 완료:", output_chunk_path)
         print("총 청크 수:", len(self.all_chunks))
         print("로그 저장:", self.paths["process_log_path"])
+        print("청킹 전 split 문서별 통계 저장:", self.paths["pre_chunk_stats_path"])
+        print("청킹 전 split 길이 상세 저장:", self.paths["pre_chunk_lengths_path"])
 
         if len(process_log_df) > 0:
             print("\nstatus 분포:")
@@ -532,13 +663,49 @@ class ExtractChunkPipeline:
             print("\nnum_chunks describe:")
             print(process_log_df["num_chunks"].describe())
 
+            if "num_pages" in process_log_df.columns:
+                print("\nnum_pages describe:")
+                print(process_log_df["num_pages"].describe())
+
+        if len(pre_chunk_stats_df) > 0:
+            print("\n===== 문서별 pre-chunk split 통계 =====")
+
+            if "pre_chunk_count" in pre_chunk_stats_df.columns:
+                print("\npre_chunk_count describe:")
+                print(pre_chunk_stats_df["pre_chunk_count"].describe())
+
+            if "pre_chunk_mean_chars" in pre_chunk_stats_df.columns:
+                print("\npre_chunk_mean_chars describe:")
+                print(pre_chunk_stats_df["pre_chunk_mean_chars"].describe())
+
+            if "pre_chunk_max_chars" in pre_chunk_stats_df.columns:
+                print("\npre_chunk_max_chars describe:")
+                print(pre_chunk_stats_df["pre_chunk_max_chars"].describe())
+
+        if len(pre_chunk_lengths_df) > 0:
+            print("\n===== 전체 문서 기준 pre-chunk split 길이 통계 =====")
+            print(
+                pre_chunk_lengths_df["split_char_len"].describe(
+                    percentiles=[0.25, 0.5, 0.75, 0.9, 0.95]
+                )
+            )
+
+            print("\n전체 split min:", int(pre_chunk_lengths_df["split_char_len"].min()))
+            print("전체 split max:", int(pre_chunk_lengths_df["split_char_len"].max()))
+            print("전체 split mean:", float(pre_chunk_lengths_df["split_char_len"].mean()))
+            print("전체 split median:", float(pre_chunk_lengths_df["split_char_len"].median()))
+
         chunk_stats_df = self.build_chunk_stats_df()
 
         return {
             "chunk_path": output_chunk_path,
             "process_log_path": self.paths["process_log_path"],
+            "pre_chunk_stats_path": self.paths["pre_chunk_stats_path"],
+            "pre_chunk_lengths_path": self.paths["pre_chunk_lengths_path"],
             "num_chunks": len(self.all_chunks),
             "process_log_df": process_log_df,
+            "pre_chunk_stats_df": pre_chunk_stats_df,
+            "pre_chunk_lengths_df": pre_chunk_lengths_df,
             "chunk_stats_df": chunk_stats_df,
             "skipped": False,
         }
@@ -550,7 +717,7 @@ class ExtractChunkPipeline:
         Returns
         -------
         pd.DataFrame
-            청크별 길이, 문서 ID, 파일 형식, 섹션 제목 등을 담은 DataFrame입니다.
+            청크별 길이, 문서 ID, 파일 형식, 페이지 정보 등을 담은 DataFrame입니다.
         """
         rows = []
 
@@ -559,12 +726,17 @@ class ExtractChunkPipeline:
                 "chunk_id": chunk.get("chunk_id"),
                 "doc_id": chunk.get("doc_id"),
                 "file_type": chunk.get("file_type"),
+                "file_name": chunk.get("file_name"),
                 "project_name": chunk.get("project_name"),
+                "organization": chunk.get("organization"),
                 "section_title": chunk.get("section_title"),
-                "chunking_method": chunk.get("chunking_method"),
+                "page_start": chunk.get("page_start"),
+                "page_end": chunk.get("page_end"),
+                "page_chunk_index": chunk.get("page_chunk_index"),
                 "chunking_strategy": chunk.get("chunking_strategy"),
                 "text_len": len(chunk.get("text", "")),
-                "char_len": chunk.get("char_len"),
+                "chunk_char_len": chunk.get("chunk_char_len"),
+                "embedding_text_len": len(chunk.get("embedding_text", "")),
             })
 
         df = pd.DataFrame(rows)
@@ -578,5 +750,17 @@ class ExtractChunkPipeline:
 
             print("\nfile_type 분포:")
             print(df["file_type"].value_counts(dropna=False))
+
+            if "chunk_char_len" in df.columns:
+                print("\nchunk_char_len describe:")
+                print(df["chunk_char_len"].describe())
+
+            if "embedding_text_len" in df.columns:
+                print("\nembedding_text_len describe:")
+                print(df["embedding_text_len"].describe())
+
+            if "page_start" in df.columns:
+                print("\npage_start describe:")
+                print(df["page_start"].describe())
 
         return df

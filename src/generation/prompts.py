@@ -20,32 +20,43 @@ from __future__ import annotations
 from typing import List, Dict, Any, Optional
 
 
-
 '''
 default:
 - 기본 RFP RAG용
-- 약간 유연한 답변
-- 베이스라인 실험에 적합
+- 문서 근거 기반 답변
+- 주요 항목 누락 방지
+- 베이스라인 및 일반 평가 실험에 적합
 '''
 DEFAULT_RFP_SYSTEM_PROMPT = """
 당신은 기업 및 정부 제안요청서(RFP)를 분석하는 전문 RAG Assistant입니다.
 반드시 제공된 문서 내용에 근거해서만 답변하세요.
 
-규칙:
+답변 규칙:
 1. 문서에 근거가 있는 내용만 답변하세요.
 2. 문서에서 확인할 수 없는 내용은 추측하지 말고 "제공된 문서에서 확인할 수 없습니다."라고 답변하세요.
-3. 질문이 예산, 기간, 계약방법, 담당자, 연락처처럼 정확한 값을 요구하면 값 중심으로 간결하게 답변하세요.
-4. 질문이 사업범위, 추진목표, 기대효과, 주요 기능처럼 목록형 답변을 요구하면 핵심 항목을 bullet로 정리하세요.
-5. 여러 문서가 검색되었더라도 질문 대상 사업과 관련된 문서의 내용만 사용하세요.
-6. 답변 마지막에는 가능하면 근거가 된 doc_id를 적으세요.
+3. 질문이 예산, 금액, 기간, 계약방법, 담당자, 연락처처럼 정확한 값을 요구하면 문서에 나온 값을 그대로 사용하세요.
+4. 질문이 사업범위, 추진목표, 기대효과, 주요 기능, 요구사항을 묻는 경우 문서에 나온 항목명을 우선적으로 bullet로 정리하세요.
+5. 문서에 나열된 고유명사, 시스템명, 기능명, 법령명, 기관명, 금액, 기간, 조건은 가능한 한 누락하지 마세요.
+6. 일반적인 설명보다 문서에 나온 구체 표현을 우선 사용하세요.
+7. 여러 문서가 검색되었더라도 질문 대상 사업과 관련된 문서의 내용만 사용하세요.
+8. 검색 문서의 내용이 서로 다르면, 질문과 가장 관련성이 높은 문서의 내용을 우선하세요.
+9. 추론 과정, 사고 과정, 분석 과정은 출력하지 마세요.
+10. 영어 분석 문장으로 시작하지 말고, 바로 한국어 답변을 작성하세요.
+11. 답변은 한국어로 작성하세요.
+12. 답변 마지막에는 가능하면 근거가 된 doc_id를 적으세요.
+
+답변 형식:
+- 목록형 질문은 bullet로 답변하세요.
+- 값 확인 질문은 먼저 값을 제시하고, 필요하면 짧은 근거를 덧붙이세요.
+- 비교 질문은 대상별로 구분해서 답변하세요.
 """.strip()
 
 
 '''
-strict
+strict:
 - 문서 근거를 더 엄격하게 요구
 - 환각이 많은 경우 사용
-- 답변이 너무 보수적으로 변할 수 있음
+- 문서에서 확인되지 않는 내용은 보수적으로 처리
 '''
 STRICT_RFP_SYSTEM_PROMPT = """
 당신은 기업 및 정부 제안요청서(RFP)를 분석하는 전문 RAG Assistant입니다.
@@ -54,11 +65,21 @@ STRICT_RFP_SYSTEM_PROMPT = """
 엄격한 답변 규칙:
 1. 검색 문서에 없는 내용은 절대 추측하지 마세요.
 2. 검색 문서에서 확인할 수 없으면 "제공된 문서에서 확인할 수 없습니다."라고 답변하세요.
-3. 숫자, 금액, 날짜, 기간, 전화번호는 문서에 나온 값을 그대로 사용하세요.
+3. 숫자, 금액, 날짜, 기간, 전화번호, 계약방법은 문서에 나온 값을 그대로 사용하세요.
 4. 문서에 여러 값이 있으면 가장 질문과 관련성이 높은 값을 선택하고, 불확실하면 불확실하다고 말하세요.
-5. 사업범위, 기대효과, 추진목표는 문서의 표현을 기반으로 요약하세요.
-6. 답변은 한국어로 작성하세요.
-7. 답변 마지막에 사용한 근거 doc_id를 적으세요.
+5. 사업범위, 기대효과, 추진목표, 주요 기능, 요구사항은 문서의 표현을 기반으로 요약하세요.
+6. 문서에 나열된 고유명사, 시스템명, 기능명, 법령명, 기관명, 금액, 기간, 조건은 가능한 한 누락하지 마세요.
+7. 일반적인 설명보다 문서에 나온 구체 표현을 우선 사용하세요.
+8. 여러 문서가 검색되었더라도 질문 대상 사업과 관련된 문서의 내용만 사용하세요.
+9. 추론 과정, 사고 과정, 분석 과정은 출력하지 마세요.
+10. 영어 분석 문장으로 시작하지 말고, 바로 한국어 답변을 작성하세요.
+11. 답변은 한국어로 작성하세요.
+12. 답변 마지막에는 가능하면 근거가 된 doc_id를 적으세요.
+
+답변 형식:
+- 목록형 질문은 bullet로 답변하세요.
+- 값 확인 질문은 먼저 값을 제시하고, 필요하면 짧은 근거를 덧붙이세요.
+- 비교 질문은 대상별로 구분해서 답변하세요.
 """.strip()
 
 
@@ -105,6 +126,25 @@ def _safe_to_string(value: Any) -> str:
     return str(value)
 
 
+def _format_page_info(
+    page_start: Any,
+    page_end: Any,
+) -> str:
+    """
+    pdf_page 청킹 metadata의 page_start/page_end를 사람이 읽기 쉬운 문자열로 변환합니다.
+    """
+    if page_start is None or page_start == "":
+        return ""
+
+    if page_end is None or page_end == "":
+        return str(page_start)
+
+    if str(page_start) == str(page_end):
+        return str(page_start)
+
+    return f"{page_start}-{page_end}"
+
+
 def format_single_context_block(
     item: Dict[str, Any],
     max_chars: Optional[int] = None,
@@ -133,7 +173,7 @@ def format_single_context_block(
         None이면 전체 text를 사용합니다.
 
     include_metadata:
-        True이면 doc_id, chunk_id, section_title 등을 context에 포함합니다.
+        True이면 doc_id, chunk_id, section_title, page 정보 등을 context에 포함합니다.
 
     Returns
     -------
@@ -158,6 +198,15 @@ def format_single_context_block(
     project_name = metadata.get("project_name", item.get("project_name", ""))
     organization = metadata.get("organization", item.get("organization", ""))
 
+    # pdf_page 청킹용 metadata
+    page_start = metadata.get("page_start", item.get("page_start", ""))
+    page_end = metadata.get("page_end", item.get("page_end", ""))
+    page_chunk_index = metadata.get(
+        "page_chunk_index",
+        item.get("page_chunk_index", ""),
+    )
+    page_info = _format_page_info(page_start, page_end)
+
     if include_metadata:
         block = f"""
 [문서 {rank}]
@@ -167,6 +216,8 @@ chunk_id: {chunk_id}
 section_id: {_safe_to_string(section_id)}
 section_title: {_safe_to_string(section_title)}
 section_path: {_safe_to_string(section_path)}
+page: {_safe_to_string(page_info)}
+page_chunk_index: {_safe_to_string(page_chunk_index)}
 project_name: {_safe_to_string(project_name)}
 organization: {_safe_to_string(organization)}
 file_name: {_safe_to_string(file_name)}
@@ -255,6 +306,13 @@ def build_user_prompt(
 [질문]
 {question}
 
+[답변 작성 지침]
+- 위 검색 문서의 내용만 사용하세요.
+- 질문에서 요구한 값, 항목, 조건을 빠뜨리지 마세요.
+- 문서에 나온 구체 명칭과 표현을 우선 사용하세요.
+- 사고 과정이나 분석 과정은 쓰지 말고, 최종 답변만 작성하세요.
+- 답변은 한국어로 작성하세요.
+
 [답변]
 """.strip()
 
@@ -289,7 +347,7 @@ def build_rfp_rag_messages(
         None이면 전체 text를 넣습니다.
 
     include_metadata:
-        True이면 context에 doc_id, chunk_id, section_title 등을 포함합니다.
+        True이면 context에 doc_id, chunk_id, section_title, page 정보 등을 포함합니다.
 
     Returns
     -------

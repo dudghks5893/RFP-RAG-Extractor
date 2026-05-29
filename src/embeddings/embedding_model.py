@@ -184,7 +184,7 @@ class EmbeddingModel:
             if logger is not None:
                 logger.update(
                     1,
-                    message=f"texts={end}/{total}"
+                    message=f"texts={end}/{total}",
                 )
 
         if logger is not None:
@@ -225,22 +225,38 @@ class EmbeddingModel:
     def encode_chunks(
         self,
         chunks: Sequence[dict],
-        text_key: str = "text",
+        text_key: str = "embedding_text",
+        fallback_text_key: str = "text",
         batch_size: int = 32,
         show_progress: bool = True,
         log_every: int = 10,
     ) -> np.ndarray:
         """
-        청크 dict 목록에서 text_key 값을 꺼내 임베딩합니다.
+        청크 dict 목록에서 embedding_text를 우선 사용해 임베딩합니다.
+
+        pdf_page_chunker.py에서 생성한 chunk에는 보통 아래 두 텍스트가 있습니다.
+
+        - text:
+          실제 문서 본문입니다.
+
+        - embedding_text:
+          기관명, 사업명, 파일명, 페이지 정보 등 metadata를 본문 앞에 붙인
+          검색 최적화용 텍스트입니다.
+
+        검색 성능 개선을 위해 embedding_text를 우선 사용하고,
+        embedding_text가 없거나 비어 있으면 text를 fallback으로 사용합니다.
 
         Parameters
         ----------
         chunks:
             청크 dict 목록입니다.
-            각 청크는 text_key에 해당하는 텍스트를 가지고 있어야 합니다.
 
         text_key:
-            청크에서 본문 텍스트를 꺼낼 key입니다.
+            임베딩에 우선 사용할 key입니다.
+            기본값은 "embedding_text"입니다.
+
+        fallback_text_key:
+            text_key 값이 없거나 비어 있을 때 사용할 fallback key입니다.
             기본값은 "text"입니다.
 
         batch_size:
@@ -257,7 +273,15 @@ class EmbeddingModel:
         np.ndarray
             청크 텍스트 임베딩 배열입니다.
         """
-        texts = [chunk.get(text_key, "") for chunk in chunks]
+        texts: List[str] = []
+
+        for chunk in chunks:
+            text = chunk.get(text_key)
+
+            if text is None or not str(text).strip():
+                text = chunk.get(fallback_text_key, "")
+
+            texts.append(str(text or ""))
 
         return self.encode_texts(
             texts=texts,
@@ -288,23 +312,23 @@ class EmbeddingModel:
     def unload(self) -> None:
         """
         SentenceTransformer 모델 객체를 해제하고 CUDA cache를 비웁니다.
-    
+
         FAISS 인덱스 생성 이후 임베딩 모델이 더 이상 필요 없거나,
         LLM 로드 전에 GPU 메모리를 확보하고 싶을 때 사용합니다.
         """
         import gc
         import torch
-    
+
         if self.model is not None:
             del self.model
             self.model = None
-    
+
         gc.collect()
-    
+
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             torch.cuda.ipc_collect()
-    
+
         print("EmbeddingModel unloaded and CUDA cache cleared.")
 
 

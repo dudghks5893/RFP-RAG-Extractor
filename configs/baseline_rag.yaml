@@ -32,16 +32,18 @@
 
 
 # =========================================================
-# 원본 데이터 추출 / 정제 / 청킹 설정
+#  원본 경로, 저장 경로, 컬럼명만 담당
 # =========================================================
 
 extract:
 
   # 원본 문서(pdf, hwp 등)가 저장된 폴더
   raw_dir: data/raw
+  # raw_dir: data/raw/v2
 
   # 문서 메타데이터 CSV
   data_list_path: data/raw/data_list.csv
+  # data_list_path: data/raw/v2/data_list_pdf.csv
 
   # 추출된 원문 txt 저장 폴더
   extracted_dir: data/processed/extracted
@@ -76,20 +78,20 @@ extract:
 
 
   # chunking 세부 설정
-  chunking:
+  # chunking:
 
-    # 하나의 chunk 최대 글자 수
-    max_chars: 3000
+  #   # 하나의 chunk 최대 글자 수
+  #   max_chars: 3000
 
-    # chunk overlap 크기
-    overlap_chars: 300
+  #   # chunk overlap 크기
+  #   overlap_chars: 300
 
-    # 최소 chunk 길이
-    min_chars: 100
+  #   # 최소 chunk 길이
+  #   min_chars: 100
 
 
   # true면 기존 chunk 파일이 있어도 다시 생성
-  force_rebuild_chunks: true
+  # force_rebuild_chunks: true
 
 # =========================================================
 # 실험 기본 정보
@@ -142,9 +144,29 @@ paths:
 
 chunking:
 
-  # 현재:
-  # section = 목차/섹션 단위 chunking
+  # 목차/섹션 단위 chunking
   strategy: section
+
+  # pdf 페이지 단위 chunking
+  # strategy: pdf_page
+
+  # 하나의 chunk 최대 글자 수
+  max_chars: 3000
+
+  # chunk overlap 크기
+  overlap_chars: 300
+
+  # 최소 chunk 길이
+  min_chars: 500
+
+  # 같은 section 안에서 너무 짧은 chunk 병합
+  merge_short_chunks: true
+
+  # 검색 성능 향상을 위해 embedding_text에 기관명/사업명/파일명/섹션명 포함
+  include_metadata_in_embedding_text: true
+
+  # true면 기존 chunk 파일이 있어도 다시 생성
+  force_rebuild_chunks: true
 
 # =========================================================
 # Embedding 설정
@@ -159,7 +181,7 @@ embedding:
   # - huggingface
   # - openai
   # -------------------------------------------------------
-  provider: openai
+  provider: huggingface
 
 
   # -------------------------------------------------------
@@ -169,7 +191,8 @@ embedding:
   # - nlpai-lab/KURE-v1
   # - BAAI/bge-m3
   # -------------------------------------------------------
-  hf_model_name: nlpai-lab/KURE-v1
+  # hf_model_name: nlpai-lab/KURE-v1
+  hf_model_name: BAAI/bge-m3
 
 
   # -------------------------------------------------------
@@ -191,7 +214,7 @@ embedding:
   # true이면 기존 벡터 DB (ex:FAISS) 인덱스가 있어도 새로 생성합니다.
   # 처음 실행하거나 section_chunks.jsonl / embedding model이 바뀌면 true로 설정하세요.
   # 이미 저장된 벡터 DB (ex:FAISS)를 재사용하려면 false로 바꾸면 됩니다.
-  force_rebuild_index: false
+  force_rebuild_index: true
 
 
   # 선택값: null이면 SentenceTransformer가 자동 device 선택
@@ -233,7 +256,7 @@ vector_db:
     faiss:
 
       # 저장 폴더
-      persist_dir: data/vector_db/faiss_openai
+      persist_dir: data/vector_db/faiss
 
       # index 파일
       index_file: index.faiss
@@ -252,7 +275,7 @@ vector_db:
     chroma:
 
       # 저장 폴더
-      persist_dir: data/vector_db/chroma_openai
+      persist_dir: data/vector_db/chroma
 
       # collection 이름
       collection: rfp_openai_rag
@@ -268,7 +291,8 @@ vector_db:
       #
       # Colab에서는 localhost 사용 불가
       # JupyterLab/Docker에서는 가능
-      url: http://localhost:6333
+      # url: http://localhost:6333
+      url: http://localhost:8888
 
       # API KEY 환경변수명
       api_key_env: QDRANT_API_KEY
@@ -319,7 +343,7 @@ llm:
   # - huggingface
   # - openai
   # -------------------------------------------------------
-  provider: openai
+  provider: huggingface
 
 
   # -------------------------------------------------------
@@ -329,7 +353,8 @@ llm:
   # - Qwen/Qwen2.5-1.5B-Instruct
   # - meta-llama/Llama-3.2-3B-Instruct
   # -------------------------------------------------------
-  hf_model_name: Qwen/Qwen2.5-1.5B-Instruct
+  # hf_model_name: Qwen/Qwen2.5-1.5B-Instruct
+  hf_model_name: Qwen/Qwen3-8B
 
 
   # -------------------------------------------------------

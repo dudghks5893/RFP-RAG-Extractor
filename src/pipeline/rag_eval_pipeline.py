@@ -67,21 +67,38 @@ SUPPORTED_LLM_PROVIDERS = ("huggingface", "hf", "openai")
 def _safe_name(value: Any) -> str:
     """파일/collection 이름에 안전하게 쓸 수 있도록 문자열을 정리합니다."""
     text = str(value or "none").strip()
+
     for old, new in [("/", "_"), ("\\", "_"), (":", "_"), (" ", "_")]:
         text = text.replace(old, new)
-    return "".join(ch for ch in text if ch.isalnum() or ch in {"_", "-", "."})[:120]
+
+    return "".join(
+        ch
+        for ch in text
+        if ch.isalnum() or ch in {"_", "-", "."}
+    )[:120]
 
 
-def _normalize_provider(provider: Optional[str], default: str = "huggingface") -> str:
+def _normalize_provider(
+    provider: Optional[str],
+    default: str = "huggingface",
+) -> str:
     provider = (provider or default).lower().strip()
+
     if provider == "hf":
         return "huggingface"
+
     return provider
 
 
 def _flat_metadata(chunk: Dict[str, Any]) -> Dict[str, Any]:
-    """Vector DB metadata에 넣을 수 있는 primitive 타입만 남깁니다."""
+    """
+    Vector DB metadata에 넣을 수 있는 primitive 타입만 남깁니다.
+
+    pdf_page 청킹에서 생성되는 page_start, page_end, page_chunk_index도
+    metadata에 포함합니다.
+    """
     metadata = dict(chunk.get("metadata") or {})
+
     metadata.update(
         {
             "chunk_id": str(chunk.get("chunk_id", "")),
@@ -91,8 +108,23 @@ def _flat_metadata(chunk: Dict[str, Any]) -> Dict[str, Any]:
             "project_name": str(chunk.get("project_name") or metadata.get("project_name", "")),
             "organization": str(chunk.get("organization") or metadata.get("organization", "")),
             "section_title": str(chunk.get("section_title") or metadata.get("section_title", "")),
+            "section_id": str(chunk.get("section_id") or metadata.get("section_id", "")),
+            "section_path": str(chunk.get("section_path") or metadata.get("section_path", "")),
+            "chunking_strategy": str(
+                chunk.get("chunking_strategy") or metadata.get("chunking_strategy", "")
+            ),
         }
     )
+
+    if chunk.get("page_start") is not None:
+        metadata["page_start"] = chunk.get("page_start")
+
+    if chunk.get("page_end") is not None:
+        metadata["page_end"] = chunk.get("page_end")
+
+    if chunk.get("page_chunk_index") is not None:
+        metadata["page_chunk_index"] = chunk.get("page_chunk_index")
+
     return {
         key: value
         for key, value in metadata.items()
@@ -122,21 +154,18 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, set):
         return [_json_safe(item) for item in sorted(value, key=lambda x: str(x))]
 
-    # numpy / pandas scalar 대응
     if hasattr(value, "item"):
         try:
             return _json_safe(value.item())
         except Exception:
             pass
 
-    # torch tensor 대응
     if hasattr(value, "detach") and hasattr(value, "cpu"):
         try:
             return _json_safe(value.detach().cpu().tolist())
         except Exception:
             pass
 
-    # pandas NA / NaN 등
     try:
         if pd.isna(value):
             return None
@@ -156,6 +185,7 @@ def _remove_dir_force(path: Path) -> None:
       chmod 후 재시도하고 그래도 실패하면 명시적으로 예외를 올립니다.
     """
     path = Path(path)
+
     if not path.exists():
         return
 
@@ -177,11 +207,15 @@ def _assert_writable_dir(path: Path) -> None:
     """SQLite/Chroma가 실제로 쓸 수 있는 디렉토리인지 미리 확인합니다."""
     path = Path(path)
     path.mkdir(parents=True, exist_ok=True)
+
     test_file = path / ".write_test"
+
     try:
         with test_file.open("w", encoding="utf-8") as f:
             f.write("ok")
+
         test_file.unlink(missing_ok=True)
+
     except Exception as exc:
         raise RuntimeError(
             f"Chroma persist_dir에 쓰기 권한이 없습니다: {path}\n"
@@ -194,7 +228,11 @@ def _assert_writable_dir(path: Path) -> None:
 class OpenAIEmbeddingModel:
     """OpenAI embedding adapter. HF embedder와 비슷하게 encode_chunks/encode_query를 제공합니다."""
 
-    def __init__(self, model_name: str, api_key_env: str = "OPENAI_API_KEY"):
+    def __init__(
+        self,
+        model_name: str,
+        api_key_env: str = "OPENAI_API_KEY",
+    ):
         try:
             from dotenv import load_dotenv
             load_dotenv()
@@ -209,24 +247,34 @@ class OpenAIEmbeddingModel:
             ) from exc
 
         api_key = os.getenv(api_key_env)
+
         if not api_key:
             raise RuntimeError(
-                f"{api_key_env} 환경변수가 없습니다. .env에 {api_key_env}=... 를 넣거나 export 해주세요."
+                f"{api_key_env} 환경변수가 없습니다. "
+                f".env에 {api_key_env}=... 를 넣거나 export 해주세요."
             )
 
         self.model_name = model_name
         self.client = OpenAI(api_key=api_key)
 
-    def encode_texts(self, texts: Sequence[str], batch_size: int = 32) -> List[List[float]]:
+    def encode_texts(
+        self,
+        texts: Sequence[str],
+        batch_size: int = 32,
+    ) -> List[List[float]]:
         vectors: List[List[float]] = []
         texts = [str(text or "") for text in texts]
+
         for start in range(0, len(texts), batch_size):
-            batch = texts[start : start + batch_size]
+            batch = texts[start:start + batch_size]
+
             response = self.client.embeddings.create(
                 model=self.model_name,
                 input=batch,
             )
+
             vectors.extend(item.embedding for item in response.data)
+
         return vectors
 
     def encode_chunks(
@@ -236,18 +284,44 @@ class OpenAIEmbeddingModel:
         show_progress: bool = True,
         log_every: int = 10,
     ) -> List[List[float]]:
-        texts = [chunk.get("text", "") for chunk in chunks]
+        """
+        청크 dict 목록에서 embedding_text를 우선 사용해 임베딩합니다.
+
+        pdf_page_chunker.py는 기관명/사업명/파일명/페이지 정보를 포함한
+        embedding_text를 생성하므로, 검색 성능 개선을 위해 이를 우선 사용합니다.
+
+        embedding_text가 없거나 비어 있으면 기존 text를 fallback으로 사용합니다.
+        """
+        texts = []
+
+        for chunk in chunks:
+            text = chunk.get("embedding_text")
+
+            if text is None or not str(text).strip():
+                text = chunk.get("text", "")
+
+            texts.append(str(text or ""))
+
         vectors: List[List[float]] = []
         total_batches = (len(texts) + batch_size - 1) // batch_size
+
         for batch_idx, start in enumerate(range(0, len(texts), batch_size), start=1):
-            batch = texts[start : start + batch_size]
+            batch = texts[start:start + batch_size]
+
             response = self.client.embeddings.create(
                 model=self.model_name,
                 input=batch,
             )
+
             vectors.extend(item.embedding for item in response.data)
-            if show_progress and (batch_idx == 1 or batch_idx % log_every == 0 or batch_idx == total_batches):
+
+            if show_progress and (
+                batch_idx == 1
+                or batch_idx % log_every == 0
+                or batch_idx == total_batches
+            ):
                 print(f"OpenAI embedding batch {batch_idx}/{total_batches}")
+
         return vectors
 
     def encode_query(self, query: str) -> List[float]:
@@ -285,9 +359,11 @@ class OpenAILLMGenerator:
             ) from exc
 
         api_key = os.getenv(api_key_env)
+
         if not api_key:
             raise RuntimeError(
-                f"{api_key_env} 환경변수가 없습니다. .env에 {api_key_env}=... 를 넣거나 export 해주세요."
+                f"{api_key_env} 환경변수가 없습니다. "
+                f".env에 {api_key_env}=... 를 넣거나 export 해주세요."
             )
 
         self.client = OpenAI(api_key=api_key)
@@ -314,14 +390,19 @@ class OpenAILLMGenerator:
         except Exception as exc:
             if not self.fallback_model_name:
                 raise
+
             print(f"OpenAI primary model 실패. fallback 사용: {repr(exc)}")
-            response_text, usage, used_model = self._call_model(self.fallback_model_name, prompt)
+            response_text, usage, used_model = self._call_model(
+                self.fallback_model_name,
+                prompt,
+            )
 
         latency = time.perf_counter() - start
         self.last_model_name = used_model
 
         input_tokens = int(usage.get("input_tokens", 0))
         output_tokens = int(usage.get("output_tokens", 0))
+
         result = {
             "response": response_text,
             "generation_latency_sec": latency,
@@ -330,56 +411,94 @@ class OpenAILLMGenerator:
             "total_tokens": input_tokens + output_tokens,
             "model_name": used_model,
         }
+
         if return_prompt:
             result["prompt"] = prompt
+
         return result
 
-    def _call_model(self, model: str, prompt: str) -> tuple[str, Dict[str, int], str]:
+    def _call_model(
+        self,
+        model: str,
+        prompt: str,
+    ) -> tuple[str, Dict[str, int], str]:
         kwargs: Dict[str, Any] = {
             "model": model,
             "input": prompt,
             "max_output_tokens": self.max_output_tokens,
         }
+
         if self.temperature is not None:
             kwargs["temperature"] = self.temperature
 
         try:
             response = self.client.responses.create(**kwargs)
         except Exception as exc:
-            # 일부 추론 모델은 temperature를 받지 않는 경우가 있어 한 번 제거하고 재시도합니다.
             if "temperature" not in str(exc).lower():
                 raise
+
             kwargs.pop("temperature", None)
             response = self.client.responses.create(**kwargs)
 
         text = (getattr(response, "output_text", "") or "").strip()
         usage_obj = getattr(response, "usage", None)
+
         usage = {
             "input_tokens": int(getattr(usage_obj, "input_tokens", 0) or 0),
             "output_tokens": int(getattr(usage_obj, "output_tokens", 0) or 0),
         }
+
         return text, usage, model
 
-    def _build_prompt(self, question: str, retrieved_chunks: List[Dict[str, Any]]) -> str:
+    def _build_prompt(
+        self,
+        question: str,
+        retrieved_chunks: List[Dict[str, Any]],
+    ) -> str:
         context_blocks = []
         max_chars = self.max_chars_per_chunk
 
         for index, chunk in enumerate(retrieved_chunks, start=1):
             text = str(chunk.get("text", ""))
+
             if max_chars:
-                text = text[: int(max_chars)]
+                text = text[:int(max_chars)]
 
             if self.include_metadata:
-                doc_id = chunk.get("doc_id") or chunk.get("metadata", {}).get("doc_id", "")
-                chunk_id = chunk.get("chunk_id") or chunk.get("metadata", {}).get("chunk_id", "")
-                file_name = chunk.get("file_name") or chunk.get("metadata", {}).get("file_name", "")
-                header = f"[Evidence {index}] doc_id={doc_id} chunk_id={chunk_id} file_name={file_name}"
+                metadata = chunk.get("metadata", {}) or {}
+                doc_id = chunk.get("doc_id") or metadata.get("doc_id", "")
+                chunk_id = chunk.get("chunk_id") or metadata.get("chunk_id", "")
+                file_name = chunk.get("file_name") or metadata.get("file_name", "")
+                project_name = chunk.get("project_name") or metadata.get("project_name", "")
+                organization = chunk.get("organization") or metadata.get("organization", "")
+                page_start = chunk.get("page_start") or metadata.get("page_start", "")
+                page_end = chunk.get("page_end") or metadata.get("page_end", "")
+
+                if page_start and page_end:
+                    page_info = (
+                        str(page_start)
+                        if str(page_start) == str(page_end)
+                        else f"{page_start}-{page_end}"
+                    )
+                else:
+                    page_info = ""
+
+                header = (
+                    f"[Evidence {index}] "
+                    f"doc_id={doc_id} "
+                    f"chunk_id={chunk_id} "
+                    f"file_name={file_name} "
+                    f"project_name={project_name} "
+                    f"organization={organization} "
+                    f"page={page_info}"
+                )
             else:
                 header = f"[Evidence {index}]"
 
             context_blocks.append(f"{header}\n{text}")
 
         contexts = "\n\n".join(context_blocks)
+
         return (
             "너는 RFP 문서를 분석하는 한국어 RAG 어시스턴트다.\n"
             "아래 근거에 있는 내용만 사용해서 답변하라. 근거가 부족하면 부족하다고 말하라.\n"
@@ -394,7 +513,12 @@ class OpenAILLMGenerator:
 
 
 class OpenAIFaissStore:
-    def __init__(self, persist_dir: Path, index_file: str = "index.faiss", chunk_meta_file: str = "chunks.pkl"):
+    def __init__(
+        self,
+        persist_dir: Path,
+        index_file: str = "index.faiss",
+        chunk_meta_file: str = "chunks.pkl",
+    ):
         self.persist_dir = Path(persist_dir)
         self.index_path = self.persist_dir / index_file
         self.chunk_meta_path = self.persist_dir / chunk_meta_file
@@ -412,17 +536,25 @@ class OpenAIFaissStore:
             if path.exists():
                 path.unlink()
 
-    def build(self, chunks: List[Dict[str, Any]], embeddings: List[List[float]]) -> None:
+    def build(
+        self,
+        chunks: List[Dict[str, Any]],
+        embeddings: List[List[float]],
+    ) -> None:
         import faiss
         import numpy as np
 
         vectors = np.asarray(embeddings, dtype="float32")
         faiss.normalize_L2(vectors)
+
         self.index = faiss.IndexFlatIP(vectors.shape[1])
         self.index.add(vectors)
+
         self.chunks = list(chunks)
         self.persist_dir.mkdir(parents=True, exist_ok=True)
+
         faiss.write_index(self.index, str(self.index_path))
+
         with self.chunk_meta_path.open("wb") as handle:
             pickle.dump(self.chunks, handle)
 
@@ -430,23 +562,39 @@ class OpenAIFaissStore:
         import faiss
 
         self.index = faiss.read_index(str(self.index_path))
+
         with self.chunk_meta_path.open("rb") as handle:
             self.chunks = pickle.load(handle)
 
-    def search(self, query_embedding: List[float], top_k: int) -> List[Dict[str, Any]]:
+    def search(
+        self,
+        query_embedding: List[float],
+        top_k: int,
+    ) -> List[Dict[str, Any]]:
         import faiss
         import numpy as np
 
         if self.index is None:
             self.load()
+
         vector = np.asarray([query_embedding], dtype="float32")
         faiss.normalize_L2(vector)
+
         scores, indices = self.index.search(vector, int(top_k))
         rows = []
+
         for rank, (idx, score) in enumerate(zip(indices[0], scores[0]), start=1):
             if idx < 0:
                 continue
-            rows.append({**self.chunks[int(idx)], "rank": rank, "score": float(score)})
+
+            rows.append(
+                {
+                    **self.chunks[int(idx)],
+                    "rank": rank,
+                    "score": float(score),
+                }
+            )
+
         return rows
 
 
@@ -471,8 +619,10 @@ class OpenAIChromaStore:
         import chromadb
 
         _assert_writable_dir(self.persist_dir)
+
         if self._client_instance is None:
             self._client_instance = chromadb.PersistentClient(path=str(self.persist_dir))
+
         return self._client_instance
 
     def _collection(self):
@@ -487,16 +637,27 @@ class OpenAIChromaStore:
         """
         if not self.persist_dir.exists():
             return False
+
         try:
             client = self._client()
-            # Chroma 버전에 따라 list_collections 반환 타입이 다를 수 있습니다.
             collections = client.list_collections()
+
             names = []
+
             for col in collections:
-                names.append(getattr(col, "name", col if isinstance(col, str) else None))
+                names.append(
+                    getattr(
+                        col,
+                        "name",
+                        col if isinstance(col, str) else None,
+                    )
+                )
+
             if self.collection_name not in set(filter(None, names)):
                 return False
+
             return client.get_collection(self.collection_name).count() > 0
+
         except Exception:
             return False
 
@@ -512,43 +673,58 @@ class OpenAIChromaStore:
         """
         if not self.persist_dir.exists():
             return
+
         try:
             self._client().delete_collection(self.collection_name)
         except Exception:
             pass
 
-    def build(self, chunks: List[Dict[str, Any]], embeddings: List[List[float]]) -> None:
+    def build(
+        self,
+        chunks: List[Dict[str, Any]],
+        embeddings: List[List[float]],
+    ) -> None:
         _assert_writable_dir(self.persist_dir)
+
         collection = self._collection()
         ids = [str(chunk["chunk_id"]) for chunk in chunks]
         documents = [chunk["text"] for chunk in chunks]
         metadatas = [_flat_metadata(chunk) for chunk in chunks]
 
-        # Chroma는 환경에 따라 큰 batch add에서 실패할 수 있어 나눠서 저장합니다.
         batch_size = 1000
+
         for start in range(0, len(ids), batch_size):
             end = start + batch_size
+
             collection.add(
                 ids=ids[start:end],
                 embeddings=embeddings[start:end],
                 documents=documents[start:end],
                 metadatas=metadatas[start:end],
             )
+
             print(f"Chroma add batch {min(end, len(ids))}/{len(ids)}")
 
-    def search(self, query_embedding: List[float], top_k: int) -> List[Dict[str, Any]]:
+    def search(
+        self,
+        query_embedding: List[float],
+        top_k: int,
+    ) -> List[Dict[str, Any]]:
         result = self._collection().query(
             query_embeddings=[query_embedding],
             n_results=int(top_k),
             include=["documents", "metadatas", "distances"],
         )
+
         rows = []
         ids = result.get("ids", [[]])[0]
         docs = result.get("documents", [[]])[0]
         metadatas = result.get("metadatas", [[]])[0]
         distances = result.get("distances", [[]])[0]
+
         for rank, chunk_id in enumerate(ids, start=1):
             metadata = metadatas[rank - 1] or {}
+
             rows.append(
                 {
                     **metadata,
@@ -560,7 +736,9 @@ class OpenAIChromaStore:
                     "metadata": metadata,
                 }
             )
+
         return rows
+
 
 class OpenAIQdrantStore:
     def __init__(self, config: Dict[str, Any]):
@@ -570,7 +748,11 @@ class OpenAIQdrantStore:
 
     def _client(self):
         from qdrant_client import QdrantClient
-        return QdrantClient(url=self.url, api_key=self.api_key)
+
+        return QdrantClient(
+            url=self.url,
+            api_key=self.api_key,
+        )
 
     def exists(self) -> bool:
         try:
@@ -588,24 +770,46 @@ class OpenAIQdrantStore:
         except Exception:
             pass
 
-    def build(self, chunks: List[Dict[str, Any]], embeddings: List[List[float]]) -> None:
+    def build(
+        self,
+        chunks: List[Dict[str, Any]],
+        embeddings: List[List[float]],
+    ) -> None:
         from qdrant_client.models import Distance, PointStruct, VectorParams
 
         client = self._client()
         self.clear()
+
         client.create_collection(
             collection_name=self.collection_name,
-            vectors_config=VectorParams(size=len(embeddings[0]), distance=Distance.COSINE),
+            vectors_config=VectorParams(
+                size=len(embeddings[0]),
+                distance=Distance.COSINE,
+            ),
         )
+
         points = [
-            PointStruct(id=index, vector=embedding, payload={"chunk": chunk})
+            PointStruct(
+                id=index,
+                vector=embedding,
+                payload={"chunk": chunk},
+            )
             for index, (chunk, embedding) in enumerate(zip(chunks, embeddings))
         ]
-        for start in range(0, len(points), 256):
-            client.upsert(collection_name=self.collection_name, points=points[start : start + 256])
 
-    def search(self, query_embedding: List[float], top_k: int) -> List[Dict[str, Any]]:
+        for start in range(0, len(points), 256):
+            client.upsert(
+                collection_name=self.collection_name,
+                points=points[start:start + 256],
+            )
+
+    def search(
+        self,
+        query_embedding: List[float],
+        top_k: int,
+    ) -> List[Dict[str, Any]]:
         client = self._client()
+
         try:
             hits = client.search(
                 collection_name=self.collection_name,
@@ -620,9 +824,11 @@ class OpenAIQdrantStore:
             ).points
 
         rows = []
+
         for rank, hit in enumerate(hits, start=1):
             chunk = dict((hit.payload or {}).get("chunk", {}))
             rows.append({**chunk, "rank": rank, "score": float(hit.score)})
+
         return rows
 
 
@@ -636,7 +842,9 @@ class OpenAISupabaseStore:
     def _client(self):
         if not self.url or not self.key:
             raise RuntimeError("Supabase URL/key 환경변수가 없습니다.")
+
         from supabase import create_client
+
         return create_client(self.url, self.key)
 
     def exists(self) -> bool:
@@ -646,12 +854,15 @@ class OpenAISupabaseStore:
         return self.exists()
 
     def clear(self) -> None:
-        # 프로젝트마다 테이블 정책이 다를 수 있어 기본 삭제는 수행하지 않습니다.
-        # 필요하면 별도 SQL/RPC로 experiment_id 기준 삭제를 구현하세요.
         return None
 
-    def build(self, chunks: List[Dict[str, Any]], embeddings: List[List[float]]) -> None:
+    def build(
+        self,
+        chunks: List[Dict[str, Any]],
+        embeddings: List[List[float]],
+    ) -> None:
         client = self._client()
+
         rows = [
             {
                 "id": chunk["chunk_id"],
@@ -661,17 +872,28 @@ class OpenAISupabaseStore:
             }
             for chunk, embedding in zip(chunks, embeddings)
         ]
-        for start in range(0, len(rows), 100):
-            client.table(self.table).upsert(rows[start : start + 100]).execute()
 
-    def search(self, query_embedding: List[float], top_k: int) -> List[Dict[str, Any]]:
+        for start in range(0, len(rows), 100):
+            client.table(self.table).upsert(rows[start:start + 100]).execute()
+
+    def search(
+        self,
+        query_embedding: List[float],
+        top_k: int,
+    ) -> List[Dict[str, Any]]:
         result = self._client().rpc(
             self.match_function,
-            {"query_embedding": query_embedding, "match_count": int(top_k)},
+            {
+                "query_embedding": query_embedding,
+                "match_count": int(top_k),
+            },
         ).execute()
+
         rows = []
+
         for rank, row in enumerate(result.data or [], start=1):
             metadata = row.get("metadata") or {}
+
             rows.append(
                 {
                     **metadata,
@@ -683,6 +905,7 @@ class OpenAISupabaseStore:
                     "metadata": metadata,
                 }
             )
+
         return rows
 
 
@@ -698,19 +921,6 @@ class RAGEvalPipeline:
     - RAG 답변 생성
     - RAGEvaluator 기반 평가
     - 결과 저장
-
-    Parameters
-    ----------
-    config_path:
-        YAML config 파일 경로입니다.
-        예: configs/baseline_rag.yaml
-
-    project_root:
-        프로젝트 루트 경로입니다.
-        None이면 find_project_root()로 자동 탐색합니다.
-
-    project_name:
-        프로젝트 루트 폴더 이름입니다.
     """
 
     def __init__(
@@ -733,14 +943,12 @@ class RAGEvalPipeline:
 
         self.config: Dict[str, Any] = load_yaml_config(self.config_path)
 
-        # 주요 객체
         self.embedder = None
         self.vector_store = None
         self.retriever = None
         self.generator = None
         self.evaluator = None
 
-        # 데이터
         self.chunks: List[Dict[str, Any]] = []
         self.standard_chunks: List[Dict[str, Any]] = []
         self.eval_dataset: List[Dict[str, Any]] = []
@@ -748,14 +956,10 @@ class RAGEvalPipeline:
         self.rag_outputs: List[Dict[str, Any]] = []
         self.scored_outputs: List[Dict[str, Any]] = []
 
-        # 경로
         self.paths: Dict[str, Path] = {}
 
         self._resolve_paths()
 
-    # ---------------------------------------------------------
-    # Config / Path
-    # ---------------------------------------------------------
     def _resolve_paths(self) -> None:
         """
         YAML config에 있는 상대 경로들을 프로젝트 루트 기준 절대 경로로 변환합니다.
@@ -785,28 +989,28 @@ class RAGEvalPipeline:
             cfg["paths"]["eval_sample_path"],
         )
 
-        # vector store별 persist_dir가 있으면 우선 사용합니다.
         store_cfg = cfg.get("vector_db", {}).get("stores", {}).get(vector_type, {})
         base_vector_dir = store_cfg.get("persist_dir") or cfg["paths"].get("vector_db_dir", "data/vector_db")
+        
+        # vector DB는 YAML에 설정된 persist_dir 바로 아래에 저장합니다.
+        # 예:
+        # - vector_db.type: faiss  -> data/vector_db/faiss/
+        # - vector_db.type: chroma -> data/vector_db/chroma/
+        #
+        # LLM 모델명이나 experiment_key를 vector DB 경로에 붙이지 않습니다.
+        # 이렇게 해야 LLM만 바꿔도 기존 vector DB를 재사용할 수 있습니다.
         self.paths["vector_db_dir"] = resolve_project_path(
             self.project_root,
             base_vector_dir,
-        ) / self.experiment_key
+        )
 
-        # ---------------------------------------------------------
-        # 결과 저장 경로
-        # ---------------------------------------------------------
-        # 기존에는 raw/scored RAG 결과가 paths.rag_output_path 값에 따라
-        # data/processed/eval 쪽으로 빠질 수 있었습니다.
-        # 실험 산출물을 한 곳에서 보기 쉽도록 모든 평가 결과 파일을
-        # reports/evaluation/<experiment_key>/ 아래에 모읍니다.
         self.paths["report_dir"] = resolve_project_path(
             self.project_root,
             cfg["paths"].get("report_dir", "reports/evaluation"),
         ) / self.experiment_key
 
         report_dir = self.paths["report_dir"]
-        prefix = f"{self.experiment_key}_sample{sample_size}"
+        prefix = f"sample{sample_size}"
 
         self.paths["rag_output_path"] = report_dir / f"{prefix}_rag_outputs.json"
         self.paths["rag_output_scored_path"] = report_dir / f"{prefix}_rag_outputs_scored.json"
@@ -836,9 +1040,6 @@ class RAGEvalPipeline:
         print("rag_output_scored_path:", self.paths["rag_output_scored_path"])
         print("report_dir:", self.paths["report_dir"])
 
-    # ---------------------------------------------------------
-    # Provider helpers
-    # ---------------------------------------------------------
     def _embedding_provider(self) -> str:
         return _normalize_provider(
             self.config.get("embedding", {}).get("provider"),
@@ -857,27 +1058,51 @@ class RAGEvalPipeline:
     def _active_embedding_model_name(self) -> str:
         embedding_cfg = self.config.get("embedding", {})
         openai_cfg = self.config.get("openai", {})
+
         if self._embedding_provider() == "openai":
-            return str(embedding_cfg.get("openai_model_name") or openai_cfg.get("embedding_model"))
+            return str(
+                embedding_cfg.get("openai_model_name")
+                or openai_cfg.get("embedding_model")
+            )
+
         return str(embedding_cfg.get("hf_model_name"))
 
     def _active_llm_model_name(self) -> str:
         llm_cfg = self.config.get("llm", {})
         openai_cfg = self.config.get("openai", {})
+
         if self._llm_provider() == "openai":
-            return str(llm_cfg.get("openai_model_name") or openai_cfg.get("llm_model"))
+            return str(
+                llm_cfg.get("openai_model_name")
+                or openai_cfg.get("llm_model")
+            )
+
         return str(llm_cfg.get("hf_model_name"))
 
     def _build_experiment_key(self) -> str:
+        """
+        결과 폴더명과 vector DB 폴더명에 사용할 실험 key를 생성합니다.
+    
+        experiment.name은 제외하고,
+        embedding model / vector DB / LLM model만 포함합니다.
+    
+        형식:
+        emb-{embedding_model}_vdb-{vector_db_type}_llm-{llm_model}
+    
+        예:
+        emb-BAAI_bge-m3_vdb-faiss_llm-Qwen_Qwen2.5-1.5B-Instruct
+        """
+        embedding_model = _safe_name(self._active_embedding_model_name())
+        vector_db_type = _safe_name(self._vector_db_type())
+        llm_model = _safe_name(self._active_llm_model_name())
+    
         parts = [
-            _safe_name(self.config.get("experiment", {}).get("name", "rag")),
-            f"emb-{_safe_name(self._embedding_provider())}",
-            _safe_name(self._active_embedding_model_name()),
-            f"llm-{_safe_name(self._llm_provider())}",
-            _safe_name(self._active_llm_model_name()),
-            f"vdb-{_safe_name(self._vector_db_type())}",
+            f"emb-{embedding_model}",
+            f"vdb-{vector_db_type}",
+            f"llm-{llm_model}",
         ]
-        return "__".join(parts)
+    
+        return "_".join(parts)
 
     def _vector_snapshot(self) -> Dict[str, Any]:
         return {
@@ -890,16 +1115,24 @@ class RAGEvalPipeline:
 
     def _load_vector_snapshot(self) -> Optional[Dict[str, Any]]:
         path = self.paths.get("vector_config_path")
+
         if not path or not path.exists():
             return None
+
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
 
     def _save_vector_snapshot(self) -> None:
         path = self.paths["vector_config_path"]
         path.parent.mkdir(parents=True, exist_ok=True)
+
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(self._vector_snapshot(), f, ensure_ascii=False, indent=2)
+            json.dump(
+                self._vector_snapshot(),
+                f,
+                ensure_ascii=False,
+                indent=2,
+            )
 
     def _ensure_output_dirs(self) -> None:
         """
@@ -920,22 +1153,31 @@ class RAGEvalPipeline:
             "experiment_summary_path",
         ]:
             path = self.paths.get(key)
+
             if path is not None:
                 Path(path).parent.mkdir(parents=True, exist_ok=True)
 
-    def _write_json_atomic(self, data: Any, path: str | Path, label: str = "json") -> None:
+    def _write_json_atomic(
+        self,
+        data: Any,
+        path: str | Path,
+        label: str = "json",
+    ) -> None:
         """
         JSON 결과를 원자적으로 저장합니다.
-        - parent directory 자동 생성
-        - numpy/pandas/Path 등 JSON 직렬화 불가 타입 자동 변환
-        - tmp 파일 저장 후 replace라 중간 실패 시 깨진 결과 파일을 덜 남깁니다.
         """
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
+
         tmp_path = path.with_suffix(path.suffix + ".tmp")
 
         with tmp_path.open("w", encoding="utf-8") as f:
-            json.dump(_json_safe(data), f, ensure_ascii=False, indent=2)
+            json.dump(
+                _json_safe(data),
+                f,
+                ensure_ascii=False,
+                indent=2,
+            )
 
         tmp_path.replace(path)
         print(f"{label} 저장:", path)
@@ -951,9 +1193,14 @@ class RAGEvalPipeline:
         try:
             save_json(_json_safe(self.rag_outputs), path)
             print("RAG 실행 결과 저장:", path)
+
         except Exception as exc:
             print(f"[WARN] save_json 실패. fallback json 저장 사용: {repr(exc)}")
-            self._write_json_atomic(self.rag_outputs, path, label="RAG 실행 결과")
+            self._write_json_atomic(
+                self.rag_outputs,
+                path,
+                label="RAG 실행 결과",
+            )
 
         if not path.exists():
             raise RuntimeError(f"RAG 결과 파일 생성 실패: {path}")
@@ -969,16 +1216,29 @@ class RAGEvalPipeline:
         path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
-            self.evaluator.save_rows_as_json(_json_safe(self.scored_outputs), str(path))
+            self.evaluator.save_rows_as_json(
+                _json_safe(self.scored_outputs),
+                str(path),
+            )
             print("Scored RAG 결과 저장:", path)
+
         except Exception as exc:
             print(f"[WARN] evaluator.save_rows_as_json 실패. fallback json 저장 사용: {repr(exc)}")
-            self._write_json_atomic(self.scored_outputs, path, label="Scored RAG 결과")
+            self._write_json_atomic(
+                self.scored_outputs,
+                path,
+                label="Scored RAG 결과",
+            )
 
         if not path.exists():
             raise RuntimeError(f"Scored RAG 결과 파일 생성 실패: {path}")
 
-    def _save_metrics_safe(self, metrics: Dict[str, Any], path: str | Path, label: str = "metrics") -> None:
+    def _save_metrics_safe(
+        self,
+        metrics: Dict[str, Any],
+        path: str | Path,
+        label: str = "metrics",
+    ) -> None:
         """
         metric JSON 저장 helper입니다.
         evaluator.save_metrics 실패 시 자체 저장으로 fallback합니다.
@@ -987,11 +1247,19 @@ class RAGEvalPipeline:
         path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
-            self.evaluator.save_metrics(_json_safe(metrics), str(path))
+            self.evaluator.save_metrics(
+                _json_safe(metrics),
+                str(path),
+            )
             print(f"{label} 저장:", path)
+
         except Exception as exc:
             print(f"[WARN] evaluator.save_metrics 실패. fallback json 저장 사용: {repr(exc)}")
-            self._write_json_atomic(metrics, path, label=label)
+            self._write_json_atomic(
+                metrics,
+                path,
+                label=label,
+            )
 
     def print_summary(self) -> None:
         """
@@ -1006,9 +1274,6 @@ class RAGEvalPipeline:
         for key, value in self.paths.items():
             print(f"{key}: {value}")
 
-    # ---------------------------------------------------------
-    # Seed / Device
-    # ---------------------------------------------------------
     def setup_runtime(self) -> None:
         """
         seed 고정과 device 확인을 수행합니다.
@@ -1017,13 +1282,8 @@ class RAGEvalPipeline:
 
         set_seed(seed)
 
-        # device.py의 get_device는 현재 사용 가능한 장치를 출력합니다.
-        # 실제 모델 로드는 각 모듈의 설정에 따라 이루어집니다.
         self.device = get_device()
 
-    # ---------------------------------------------------------
-    # Data loading
-    # ---------------------------------------------------------
     def load_eval_dataset(self) -> List[Dict[str, Any]]:
         """
         전체 평가 데이터셋을 로드합니다.
@@ -1092,8 +1352,10 @@ class RAGEvalPipeline:
         """
         for key in ["text", "page_content", "content", "chunk_text"]:
             value = chunk.get(key)
+
             if value:
                 return str(value)
+
         return ""
 
     @staticmethod
@@ -1149,12 +1411,14 @@ class RAGEvalPipeline:
             if not doc_id.strip():
                 continue
 
-            standard_chunks.append({
-                **chunk,
-                "chunk_id": chunk_id,
-                "doc_id": doc_id,
-                "text": text,
-            })
+            standard_chunks.append(
+                {
+                    **chunk,
+                    "chunk_id": chunk_id,
+                    "doc_id": doc_id,
+                    "text": text,
+                }
+            )
 
         self.standard_chunks = standard_chunks
 
@@ -1168,22 +1432,37 @@ class RAGEvalPipeline:
         청크 통계를 출력하고 DataFrame을 반환합니다.
         """
         if not self.standard_chunks:
-            raise RuntimeError("standard_chunks가 비어 있습니다. standardize_chunks()를 먼저 호출하세요.")
+            raise RuntimeError(
+                "standard_chunks가 비어 있습니다. standardize_chunks()를 먼저 호출하세요."
+            )
 
-        df = pd.DataFrame([
-            {
-                "chunk_id": chunk["chunk_id"],
-                "doc_id": chunk["doc_id"],
-                "file_type": chunk.get("file_type"),
-                "chunking_strategy": chunk.get("chunking_strategy", chunk.get("chunking_method")),
-                "text_len": len(chunk.get("text", "")),
-            }
-            for chunk in self.standard_chunks
-        ])
+        df = pd.DataFrame(
+            [
+                {
+                    "chunk_id": chunk["chunk_id"],
+                    "doc_id": chunk["doc_id"],
+                    "file_type": chunk.get("file_type"),
+                    "chunking_strategy": chunk.get(
+                        "chunking_strategy",
+                        chunk.get("chunking_method"),
+                    ),
+                    "text_len": len(chunk.get("text", "")),
+                    "embedding_text_len": len(chunk.get("embedding_text", "")),
+                    "page_start": chunk.get("page_start"),
+                    "page_end": chunk.get("page_end"),
+                }
+                for chunk in self.standard_chunks
+            ]
+        )
 
         print("청크 수:", len(df))
+
         print("\ntext_len describe:")
         print(df["text_len"].describe())
+
+        if "embedding_text_len" in df.columns:
+            print("\nembedding_text_len describe:")
+            print(df["embedding_text_len"].describe())
 
         print("\n문서별 청크 수 describe:")
         print(df.groupby("doc_id")["chunk_id"].count().describe())
@@ -1193,16 +1472,14 @@ class RAGEvalPipeline:
 
         return df
 
-    # ---------------------------------------------------------
-    # Chunk fingerprint
-    # ---------------------------------------------------------
     def compute_chunk_fingerprint(self) -> Dict[str, Any]:
         """
         현재 standard_chunks의 내용을 기반으로 fingerprint를 계산합니다.
 
         목적:
         - section_chunks.jsonl의 경로가 같아도 내용이 바뀌면 감지
-        - 청크 순서, chunk_id, doc_id, text가 바뀌면 vector DB 재생성
+        - 청크 순서, chunk_id, doc_id, text, embedding_text가 바뀌면 vector DB 재생성
+        - pdf_page 청킹의 page_start/page_end 변경도 감지
         """
         if not self.standard_chunks:
             raise RuntimeError(
@@ -1218,10 +1495,13 @@ class RAGEvalPipeline:
                 "chunk_id": str(chunk.get("chunk_id", "")),
                 "doc_id": str(chunk.get("doc_id", "")),
                 "text": str(chunk.get("text", "")),
+                "embedding_text": str(chunk.get("embedding_text", "")),
                 "file_type": str(chunk.get("file_type", "")),
                 "chunking_strategy": str(
                     chunk.get("chunking_strategy", chunk.get("chunking_method", ""))
                 ),
+                "page_start": str(chunk.get("page_start", "")),
+                "page_end": str(chunk.get("page_end", "")),
             }
 
             encoded = json.dumps(
@@ -1316,7 +1596,6 @@ class RAGEvalPipeline:
         vector_dir = self.paths["vector_db_dir"]
 
         if vector_type in {"faiss", "chroma"}:
-            # 기존 열린 client 참조를 버린 뒤 디렉토리 자체를 정리합니다.
             self.vector_store = None
             _remove_dir_force(vector_dir)
             vector_dir.mkdir(parents=True, exist_ok=True)
@@ -1324,19 +1603,20 @@ class RAGEvalPipeline:
             print("기존 vector DB 디렉토리 삭제 후 재생성:", vector_dir)
             return
 
-        if embedding_provider == "openai" and self.vector_store is not None and hasattr(self.vector_store, "clear"):
+        if (
+            embedding_provider == "openai"
+            and self.vector_store is not None
+            and hasattr(self.vector_store, "clear")
+        ):
             self.vector_store.clear()
 
         for path_key in ["chunk_fingerprint_path", "vector_config_path"]:
             path = self.paths.get(path_key)
+
             if path and path.exists():
                 path.unlink()
                 print("기존 vector DB 메타 파일 삭제:", path)
 
-
-    # ---------------------------------------------------------
-    # Embedding / Vector Store / Retriever
-    # ---------------------------------------------------------
     def load_embedder(self, device: Optional[str] = None):
         """
         embedding.provider 값에 따라 HF 또는 OpenAI 임베딩 모델을 로드합니다.
@@ -1346,11 +1626,16 @@ class RAGEvalPipeline:
 
         if provider == "openai":
             openai_cfg = self.config.get("openai", {})
-            model_name = embedding_cfg.get("openai_model_name") or openai_cfg.get("embedding_model")
+            model_name = (
+                embedding_cfg.get("openai_model_name")
+                or openai_cfg.get("embedding_model")
+            )
+
             self.embedder = OpenAIEmbeddingModel(
                 model_name=model_name,
                 api_key_env=openai_cfg.get("api_key_env", "OPENAI_API_KEY"),
             )
+
             print("OpenAI embedder 로드:", model_name)
             return self.embedder
 
@@ -1363,6 +1648,7 @@ class RAGEvalPipeline:
             device=device,
             trust_remote_code=embedding_cfg.get("trust_remote_code", True),
         )
+
         print("HF embedder 로드:", embedding_cfg["hf_model_name"])
         return self.embedder
 
@@ -1384,7 +1670,8 @@ class RAGEvalPipeline:
         if embedding_provider == "huggingface":
             if vector_type != "faiss":
                 raise ValueError(
-                    "현재 HF embedding 경로는 기존 FAISSVectorStore를 사용하므로 vector_db.type='faiss'만 지원합니다. "
+                    "현재 HF embedding 경로는 기존 FAISSVectorStore를 사용하므로 "
+                    "vector_db.type='faiss'만 지원합니다. "
                     "Chroma/Qdrant/Supabase 실험은 embedding.provider='openai'로 실행하세요."
                 )
 
@@ -1394,6 +1681,7 @@ class RAGEvalPipeline:
                 chunk_meta_file=store_cfg.get("chunk_meta_file", "chunks.pkl"),
                 config_file=store_cfg.get("config_file", "config.json"),
             )
+
             return self.vector_store
 
         if embedding_provider != "openai":
@@ -1405,15 +1693,20 @@ class RAGEvalPipeline:
                 index_file=store_cfg.get("index_file", "index.faiss"),
                 chunk_meta_file=store_cfg.get("chunk_meta_file", "chunks.pkl"),
             )
+
         elif vector_type == "chroma":
             self.vector_store = OpenAIChromaStore(
                 persist_dir=self.paths["vector_db_dir"],
                 collection=f"{store_cfg.get('collection', 'rfp_openai_rag')}_{_safe_name(self.experiment_key)}",
             )
+
         elif vector_type == "qdrant":
             qdrant_cfg = dict(store_cfg)
-            qdrant_cfg["collection"] = f"{store_cfg.get('collection', 'rfp_openai_rag')}_{_safe_name(self.experiment_key)}"
+            qdrant_cfg["collection"] = (
+                f"{store_cfg.get('collection', 'rfp_openai_rag')}_{_safe_name(self.experiment_key)}"
+            )
             self.vector_store = OpenAIQdrantStore(qdrant_cfg)
+
         elif vector_type == "supabase":
             self.vector_store = OpenAISupabaseStore(dict(store_cfg))
 
@@ -1457,6 +1750,7 @@ class RAGEvalPipeline:
                 "paths.chunk_path",
             ],
         )
+
         reasons = list(reasons) + fingerprint_reasons
 
         if fingerprint_rebuild:
@@ -1489,28 +1783,41 @@ class RAGEvalPipeline:
 
             del embeddings
             gc.collect()
+
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
                 torch.cuda.ipc_collect()
 
             if reload_query_embedder_on_cpu:
                 print("FAISS 생성 완료. GPU embedding model 해제 후 CPU query embedder 재로드")
+
                 if self.embedder is not None:
                     if hasattr(self.embedder, "unload"):
                         self.embedder.unload()
                     else:
                         del self.embedder
+
                     self.embedder = None
                     gc.collect()
+
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
                         torch.cuda.ipc_collect()
+
                 self.load_embedder(device="cpu")
+
         else:
             print("기존 HF FAISS 인덱스 로드")
             self.vector_store.load()
+
             if self.embedder is None:
-                self.load_embedder(device="cpu" if reload_query_embedder_on_cpu else embedding_cfg.get("device"))
+                self.load_embedder(
+                    device=(
+                        "cpu"
+                        if reload_query_embedder_on_cpu
+                        else embedding_cfg.get("device")
+                    )
+                )
 
         return self.vector_store
 
@@ -1526,23 +1833,30 @@ class RAGEvalPipeline:
         saved_snapshot = self._load_vector_snapshot()
         snapshot_rebuild = saved_snapshot != self._vector_snapshot()
 
-        # 중요: Chroma는 exists()만 호출해도 PersistentClient/SQLite가 열릴 수 있습니다.
-        # force/fingerprint/snapshot 때문에 어차피 rebuild라면 exists()를 호출하지 않습니다.
-        # 기존 코드처럼 exists() -> 디렉토리 삭제 -> build 순서로 가면 readonly database가 발생할 수 있습니다.
-        pre_rebuild = bool(force_rebuild or fingerprint_rebuild or snapshot_rebuild)
+        pre_rebuild = bool(
+            force_rebuild
+            or fingerprint_rebuild
+            or snapshot_rebuild
+        )
+
         if pre_rebuild:
             exists = False
         else:
             exists = self.vector_store.exists()
 
         rebuild = pre_rebuild or not exists
+
         reasons = []
+
         if force_rebuild:
             reasons.append("embedding.force_rebuild_index=True")
+
         if fingerprint_rebuild:
             reasons.extend(fingerprint_reasons)
+
         if snapshot_rebuild:
             reasons.append("embedding/vector snapshot 변경")
+
         if not exists:
             reasons.append("저장된 vector store 없음")
 
@@ -1550,7 +1864,6 @@ class RAGEvalPipeline:
             print(f"OpenAI {self._vector_db_type()} vector store 새로 생성")
             print("rebuild reasons:", reasons)
 
-            # Chroma/FAISS 로컬 DB는 client를 열기 전에 디렉토리부터 정리해야 합니다.
             self.clear_vector_db_files()
             self.setup_vector_store()
 
@@ -1560,13 +1873,17 @@ class RAGEvalPipeline:
                 show_progress=True,
                 log_every=10,
             )
+
             self.vector_store.build(self.standard_chunks, embeddings)
             self.save_chunk_fingerprint(self.compute_chunk_fingerprint())
             self._save_vector_snapshot()
+
             del embeddings
             gc.collect()
+
         else:
             print(f"기존 OpenAI {self._vector_db_type()} vector store 로드")
+
             if hasattr(self.vector_store, "load"):
                 self.vector_store.load()
 
@@ -1585,10 +1902,13 @@ class RAGEvalPipeline:
             self.setup_vector_store()
 
         if self._embedding_provider() == "openai":
-            # OpenAI 경로는 RAGRetriever를 만들지 않고 vector_store.search()를 직접 사용합니다.
-            # 이미 build/load가 끝난 vector store를 force_rebuild=True 때문에 반복 재생성하지 않도록 방어합니다.
-            if self.vector_store is None or not hasattr(self.vector_store, "is_loaded") or not self.vector_store.is_loaded():
+            if (
+                self.vector_store is None
+                or not hasattr(self.vector_store, "is_loaded")
+                or not self.vector_store.is_loaded()
+            ):
                 self.build_or_load_vector_store()
+
             self.retriever = None
             return self.vector_store
 
@@ -1600,30 +1920,48 @@ class RAGEvalPipeline:
             vector_store=self.vector_store,
             top_k=self.config["retrieval"]["top_k"],
         )
+
         return self.retriever
 
-    def _retrieve(self, question: str, top_k: int) -> List[Dict[str, Any]]:
+    def _retrieve(
+        self,
+        question: str,
+        top_k: int,
+    ) -> List[Dict[str, Any]]:
         if self._embedding_provider() == "openai":
             query_embedding = self.embedder.encode_query(question)
             return self.vector_store.search(query_embedding, top_k)
 
         if self.retriever is None:
             raise RuntimeError("retriever가 없습니다. setup_retriever()를 먼저 호출하세요.")
+
         return self.retriever.retrieve(query=question, top_k=top_k)
 
-    def _get_retrieved_ids(self, retrieved_chunks: List[Dict[str, Any]]) -> List[str]:
+    def _get_retrieved_ids(
+        self,
+        retrieved_chunks: List[Dict[str, Any]],
+    ) -> List[str]:
         if self.retriever is not None and hasattr(self.retriever, "get_retrieved_ids"):
             return self.retriever.get_retrieved_ids(retrieved_chunks)
+
         return [str(chunk.get("doc_id", "")) for chunk in retrieved_chunks]
 
-    def _get_retrieved_chunk_ids(self, retrieved_chunks: List[Dict[str, Any]]) -> List[str]:
+    def _get_retrieved_chunk_ids(
+        self,
+        retrieved_chunks: List[Dict[str, Any]],
+    ) -> List[str]:
         if self.retriever is not None and hasattr(self.retriever, "get_retrieved_chunk_ids"):
             return self.retriever.get_retrieved_chunk_ids(retrieved_chunks)
+
         return [str(chunk.get("chunk_id", "")) for chunk in retrieved_chunks]
 
-    def _get_retrieved_contexts(self, retrieved_chunks: List[Dict[str, Any]]) -> List[str]:
+    def _get_retrieved_contexts(
+        self,
+        retrieved_chunks: List[Dict[str, Any]],
+    ) -> List[str]:
         if self.retriever is not None and hasattr(self.retriever, "get_retrieved_contexts"):
             return self.retriever.get_retrieved_contexts(retrieved_chunks)
+
         return [str(chunk.get("text", "")) for chunk in retrieved_chunks]
 
     def _compact_retrieved_chunks(
@@ -1636,21 +1974,102 @@ class RAGEvalPipeline:
                 retrieved_chunks,
                 max_text_chars=max_text_chars,
             )
-        return [
-            {
-                "rank": chunk.get("rank"),
-                "score": chunk.get("score"),
-                "chunk_id": chunk.get("chunk_id"),
-                "doc_id": chunk.get("doc_id"),
-                "text": str(chunk.get("text", ""))[:max_text_chars],
-                "metadata": chunk.get("metadata", {}),
-            }
-            for chunk in retrieved_chunks
-        ]
 
-    # ---------------------------------------------------------
-    # LLM Generator
-    # ---------------------------------------------------------
+        compact_rows = []
+
+        for chunk in retrieved_chunks:
+            metadata = chunk.get("metadata", {}) or {}
+
+            compact_rows.append(
+                {
+                    "rank": chunk.get("rank"),
+                    "score": chunk.get("score"),
+                    "chunk_id": chunk.get("chunk_id"),
+                    "doc_id": chunk.get("doc_id"),
+                    "file_name": chunk.get("file_name") or metadata.get("file_name"),
+                    "project_name": chunk.get("project_name") or metadata.get("project_name"),
+                    "organization": chunk.get("organization") or metadata.get("organization"),
+                    "page_start": chunk.get("page_start") or metadata.get("page_start"),
+                    "page_end": chunk.get("page_end") or metadata.get("page_end"),
+                    "text": str(chunk.get("text", ""))[:max_text_chars],
+                    "metadata": metadata,
+                }
+            )
+
+        return compact_rows
+
+    def _get_first_eval_value(
+        self,
+        item: Dict[str, Any],
+        keys: Sequence[str],
+        default: str = "",
+    ) -> str:
+        """
+        평가 item에서 여러 후보 key 중 첫 번째 유효 값을 문자열로 반환합니다.
+        """
+        for key in keys:
+            value = item.get(key)
+
+            if value is None:
+                continue
+
+            text = str(value).strip()
+
+            if text and text.lower() != "nan":
+                return text
+
+        return default
+
+    def build_eval_retrieval_query(
+        self,
+        eval_item: Dict[str, Any],
+    ) -> str:
+        """
+        자동 평가용 retrieval query를 생성합니다.
+
+        자동 평가 질문에는 "이 사업", "이 제안요청서"처럼 지시어가 많습니다.
+        전체 문서 검색에서 정답 문서를 더 잘 찾기 위해 검색 단계에만
+        기관명, 사업명, doc_id를 함께 넣습니다.
+
+        주의:
+        - 이 query는 retrieval에만 사용합니다.
+        - LLM 생성에는 원래 question을 그대로 사용합니다.
+        """
+        question = self._get_first_eval_value(
+            eval_item,
+            ["question", "질문"],
+        )
+
+        organization = self._get_first_eval_value(
+            eval_item,
+            ["organization", "발주 기관", "기관명"],
+        )
+
+        project_name = self._get_first_eval_value(
+            eval_item,
+            ["project_name", "사업명", "project"],
+        )
+
+        doc_id = self._get_first_eval_value(
+            eval_item,
+            ["doc_id", "공고 번호"],
+        )
+
+        parts = []
+
+        if organization:
+            parts.append(f"기관명: {organization}")
+
+        if project_name:
+            parts.append(f"사업명: {project_name}")
+
+        if doc_id:
+            parts.append(f"doc_id: {doc_id}")
+
+        parts.append(f"질문: {question}")
+
+        return "\n".join(parts)
+
     def load_generator(self):
         """
         llm.provider 값에 따라 HF 또는 OpenAI generator를 로드합니다.
@@ -1660,17 +2079,28 @@ class RAGEvalPipeline:
 
         if provider == "openai":
             openai_cfg = self.config.get("openai", {})
-            model_name = llm_cfg.get("openai_model_name") or openai_cfg.get("llm_model")
+            model_name = (
+                llm_cfg.get("openai_model_name")
+                or openai_cfg.get("llm_model")
+            )
+
             self.generator = OpenAILLMGenerator(
                 model_name=model_name,
-                fallback_model_name=llm_cfg.get("fallback_model_name") or openai_cfg.get("fallback_llm_model"),
+                fallback_model_name=(
+                    llm_cfg.get("fallback_model_name")
+                    or openai_cfg.get("fallback_llm_model")
+                ),
                 api_key_env=openai_cfg.get("api_key_env", "OPENAI_API_KEY"),
-                max_output_tokens=llm_cfg.get("max_output_tokens", llm_cfg.get("max_new_tokens", 512)),
+                max_output_tokens=llm_cfg.get(
+                    "max_output_tokens",
+                    llm_cfg.get("max_new_tokens", 512),
+                ),
                 temperature=llm_cfg.get("temperature", 0.0),
                 prompt_type=llm_cfg.get("prompt_type", "default"),
                 max_chars_per_chunk=llm_cfg.get("max_chars_per_chunk"),
                 include_metadata=llm_cfg.get("include_metadata", True),
             )
+
             print("OpenAI generator 로드:", model_name)
             return self.generator
 
@@ -1679,7 +2109,10 @@ class RAGEvalPipeline:
 
         self.generator = load_llm_generator(
             model_name=llm_cfg["hf_model_name"],
-            max_new_tokens=llm_cfg.get("max_new_tokens", llm_cfg.get("max_output_tokens", 512)),
+            max_new_tokens=llm_cfg.get(
+                "max_new_tokens",
+                llm_cfg.get("max_output_tokens", 512),
+            ),
             temperature=llm_cfg.get("temperature", 0.0),
             do_sample=llm_cfg.get("do_sample", False),
             trust_remote_code=llm_cfg.get("trust_remote_code", True),
@@ -1687,15 +2120,24 @@ class RAGEvalPipeline:
             max_chars_per_chunk=llm_cfg.get("max_chars_per_chunk"),
             include_metadata=llm_cfg.get("include_metadata", True),
         )
+
         print("HF generator 로드:", llm_cfg["hf_model_name"])
         return self.generator
 
-    # ---------------------------------------------------------
-    # RAG 실행
-    # ---------------------------------------------------------
-    def run_single_rag(self, eval_item: Dict[str, Any]) -> Dict[str, Any]:
+    def run_single_rag(
+        self,
+        eval_item: Dict[str, Any],
+    ) -> Dict[str, Any]:
         """
         평가 문항 1개에 대해 RAG를 실행합니다.
+
+        자동 평가에서는 retrieval query와 generation question을 분리합니다.
+
+        - retrieval_query:
+          기관명/사업명/doc_id/질문을 함께 넣어 정답 문서 검색률을 높입니다.
+
+        - question:
+          LLM 답변 생성에는 원래 질문을 그대로 사용합니다.
         """
         if self.vector_store is None:
             raise RuntimeError("vector_store가 없습니다. setup_retriever()를 먼저 호출하세요.")
@@ -1706,10 +2148,12 @@ class RAGEvalPipeline:
         question = eval_item["question"]
         top_k = int(self.config["retrieval"]["top_k"])
 
+        retrieval_query = self.build_eval_retrieval_query(eval_item)
+
         start_total = time.perf_counter()
 
         start_retrieval = time.perf_counter()
-        retrieved_chunks = self._retrieve(question, top_k=top_k)
+        retrieved_chunks = self._retrieve(retrieval_query, top_k=top_k)
         retrieval_latency_sec = time.perf_counter() - start_retrieval
 
         generation_result = self.generator.generate_from_retrieved_chunks(
@@ -1722,6 +2166,7 @@ class RAGEvalPipeline:
 
         result = {
             **eval_item,
+            "retrieval_query": retrieval_query,
             "embedding_provider": self._embedding_provider(),
             "embedding_model": self._active_embedding_model_name(),
             "llm_provider": self._llm_provider(),
@@ -1730,7 +2175,10 @@ class RAGEvalPipeline:
             "experiment_key": self.experiment_key,
             "retrieved_ids": self._get_retrieved_ids(retrieved_chunks),
             "retrieved_chunk_ids": self._get_retrieved_chunk_ids(retrieved_chunks),
-            "retrieved_chunks": self._compact_retrieved_chunks(retrieved_chunks, max_text_chars=1500),
+            "retrieved_chunks": self._compact_retrieved_chunks(
+                retrieved_chunks,
+                max_text_chars=1500,
+            ),
             "retrieved_contexts": self._get_retrieved_contexts(retrieved_chunks),
             "response": generation_result["response"],
             "retrieval_latency_sec": retrieval_latency_sec,
@@ -1744,7 +2192,10 @@ class RAGEvalPipeline:
 
         return result
 
-    def _estimate_generation_cost(self, generation_result: Dict[str, Any]) -> float:
+    def _estimate_generation_cost(
+        self,
+        generation_result: Dict[str, Any],
+    ) -> float:
         """
         OpenAI 모델일 때만 대략 비용을 계산합니다.
         config.openai.pricing에 모델별 단가를 넣으면 그 값을 우선 사용합니다.
@@ -1755,14 +2206,18 @@ class RAGEvalPipeline:
 
         openai_cfg = self.config.get("openai", {})
         pricing_cfg = openai_cfg.get("pricing", {})
-        model_name = generation_result.get("model_name") or self._active_llm_model_name()
+        model_name = (
+            generation_result.get("model_name")
+            or self._active_llm_model_name()
+        )
 
-        # 필요하면 yaml에서 덮어쓰세요. 기본값은 실험 기록용 안전장치입니다.
         default_pricing = {
             "gpt-5-mini": {"input": 0.15 / 1_000_000, "output": 0.60 / 1_000_000},
             "gpt-5-nano": {"input": 0.075 / 1_000_000, "output": 0.30 / 1_000_000},
         }
+
         pricing = pricing_cfg.get(model_name) or default_pricing.get(model_name)
+
         if not pricing:
             return 0.0
 
@@ -1779,6 +2234,9 @@ class RAGEvalPipeline:
     ) -> Dict[str, Any]:
         """
         실제 사용자 질문 1개에 대해 RAG를 실행합니다.
+
+        실제 사용자 질문은 자동 평가셋과 달리 별도의 doc_id/project_name row가 없으므로
+        원래 question을 그대로 retrieval에 사용합니다.
         """
         if self.vector_store is None:
             self.setup_retriever()
@@ -1811,7 +2269,10 @@ class RAGEvalPipeline:
             "experiment_key": self.experiment_key,
             "retrieved_ids": self._get_retrieved_ids(retrieved_chunks),
             "retrieved_chunk_ids": self._get_retrieved_chunk_ids(retrieved_chunks),
-            "retrieved_chunks": self._compact_retrieved_chunks(retrieved_chunks, max_text_chars=1500),
+            "retrieved_chunks": self._compact_retrieved_chunks(
+                retrieved_chunks,
+                max_text_chars=1500,
+            ),
             "retrieved_contexts": self._get_retrieved_contexts(retrieved_chunks),
             "response": generation_result["response"],
             "retrieval_latency_sec": retrieval_latency_sec,
@@ -1840,7 +2301,6 @@ class RAGEvalPipeline:
 
         return result
 
-
     def run_human_eval_queries_if_enabled(self) -> List[Dict[str, Any]]:
         """
         팀원 수동 평가용 실제 사용자 질문 리스트를 실행합니다.
@@ -1848,12 +2308,6 @@ class RAGEvalPipeline:
         실행 시점:
         - 자동 평가셋 RAG 실행과 evaluate()가 끝난 직후
         - pipeline.cleanup()이 호출되기 전
-
-        중요:
-        - 자동 평가에서 이미 로드한 embedder/vector_store/retriever/generator를 그대로 재사용합니다.
-        - 여기서 모델이나 vector DB를 새로 로드하지 않습니다.
-        - 모든 팀원 평가 질문 실행이 끝난 뒤 run_rag_eval.py의 finally에서
-          pipeline.cleanup()과 disk_guard.cleanup()이 실행됩니다.
         """
         human_eval_cfg = self.config.get("human_eval", {})
 
@@ -1897,44 +2351,49 @@ class RAGEvalPipeline:
             except Exception as e:
                 print(f"[Human Eval][ERROR] question={question} | error={repr(e)}")
 
-                human_eval_outputs.append({
-                    "question": question,
-                    "retrieved_ids": [],
-                    "retrieved_chunk_ids": [],
-                    "retrieved_chunks": [],
-                    "retrieved_contexts": [],
-                    "response": "",
-                    "error": repr(e),
-                    "retrieval_latency_sec": 0.0,
-                    "generation_latency_sec": 0.0,
-                    "total_latency_sec": 0.0,
-                    "input_tokens": 0,
-                    "output_tokens": 0,
-                    "total_tokens": 0,
-                    "estimated_cost": 0.0,
-                })
+                human_eval_outputs.append(
+                    {
+                        "question": question,
+                        "retrieved_ids": [],
+                        "retrieved_chunk_ids": [],
+                        "retrieved_chunks": [],
+                        "retrieved_contexts": [],
+                        "response": "",
+                        "error": repr(e),
+                        "retrieval_latency_sec": 0.0,
+                        "generation_latency_sec": 0.0,
+                        "total_latency_sec": 0.0,
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "total_tokens": 0,
+                        "estimated_cost": 0.0,
+                    }
+                )
 
         print("Human eval query logging 완료:", output_csv)
 
         return human_eval_outputs
 
-        
     def run_rag_on_sample(self) -> List[Dict[str, Any]]:
         """
         sample_eval_dataset 전체에 대해 RAG를 실행하고 결과를 저장합니다.
         """
         if not self.sample_eval_dataset:
-            raise RuntimeError("sample_eval_dataset이 비어 있습니다. load_or_create_eval_sample()을 먼저 호출하세요.")
+            raise RuntimeError(
+                "sample_eval_dataset이 비어 있습니다. load_or_create_eval_sample()을 먼저 호출하세요."
+            )
 
-        # OpenAI embedding 경로에서는 self.retriever를 의도적으로 None으로 둡니다.
-        # 따라서 retriever 기준이 아니라 embedder/vector_store 기준으로 준비 상태를 확인합니다.
         if self.embedder is None:
             self.load_embedder()
 
         if self.vector_store is None:
             self.setup_vector_store()
 
-        if self.vector_store is None or not hasattr(self.vector_store, "is_loaded") or not self.vector_store.is_loaded():
+        if (
+            self.vector_store is None
+            or not hasattr(self.vector_store, "is_loaded")
+            or not self.vector_store.is_loaded()
+        ):
             self.build_or_load_vector_store()
 
         if self._embedding_provider() != "openai" and self.retriever is None:
@@ -1961,6 +2420,7 @@ class RAGEvalPipeline:
             except Exception as e:
                 error_result = {
                     **item,
+                    "retrieval_query": "",
                     "retrieved_ids": [],
                     "retrieved_chunk_ids": [],
                     "retrieved_chunks": [],
@@ -1978,14 +2438,10 @@ class RAGEvalPipeline:
                 rag_outputs.append(error_result)
 
         self.rag_outputs = rag_outputs
-
         self._save_rag_outputs()
 
         return self.rag_outputs
 
-    # ---------------------------------------------------------
-    # Evaluation
-    # ---------------------------------------------------------
     def setup_evaluator(self) -> RAGEvaluator:
         """
         RAGEvaluator를 생성합니다.
@@ -2015,9 +2471,15 @@ class RAGEvalPipeline:
                 k=top_k,
             )
 
-        valid_costs = [row.get("estimated_cost", 0.0) for row in self.rag_outputs if "error" not in row]
+        valid_costs = [
+            row.get("estimated_cost", 0.0)
+            for row in self.rag_outputs
+            if "error" not in row
+        ]
+
         total_cost = float(sum(valid_costs))
         avg_cost_per_query = total_cost / len(valid_costs) if valid_costs else 0.0
+
         metrics["total_cost"] = total_cost
         metrics["avg_cost_per_query"] = avg_cost_per_query
 
@@ -2159,38 +2621,41 @@ class RAGEvalPipeline:
         for row in rows:
             retrieved_ids_topk = row.get("retrieved_ids", [])[:top_k]
 
-            summary_rows.append({
-                "qid": row.get("qid"),
-                "doc_id": row.get("doc_id"),
-                "question_type": row.get("question_type"),
-                "source_type": row.get("source_type"),
-                "answer_format": row.get("answer_format"),
-                "file_type": row.get("file_type"),
-                "project_name": row.get("project_name"),
-                "organization": row.get("organization"),
-                "question": row.get("question"),
-                "reference": row.get("reference"),
-                "response": row.get("response"),
-                "embedding_provider": row.get("embedding_provider"),
-                "embedding_model": row.get("embedding_model"),
-                "llm_provider": row.get("llm_provider"),
-                "llm_model": row.get("llm_model"),
-                "vector_db_type": row.get("vector_db_type"),
-                "experiment_key": row.get("experiment_key"),
-                "retrieved_ids": str(row.get("retrieved_ids", [])),
-                "retrieval_hit": row.get("doc_id") in set(retrieved_ids_topk),
-                "keyword_group_recall": row.get("keyword_group_recall"),
-                "matched_keyword_group_count": row.get("matched_keyword_group_count"),
-                "total_keyword_group_count": row.get("total_keyword_group_count"),
-                "missed_groups": str(row.get("missed_groups", [])),
-                "retrieval_latency_sec": row.get("retrieval_latency_sec"),
-                "generation_latency_sec": row.get("generation_latency_sec"),
-                "total_latency_sec": row.get("total_latency_sec"),
-                "input_tokens": row.get("input_tokens"),
-                "output_tokens": row.get("output_tokens"),
-                "estimated_cost": row.get("estimated_cost", 0.0),
-                "error": row.get("error", ""),
-            })
+            summary_rows.append(
+                {
+                    "qid": row.get("qid"),
+                    "doc_id": row.get("doc_id"),
+                    "question_type": row.get("question_type"),
+                    "source_type": row.get("source_type"),
+                    "answer_format": row.get("answer_format"),
+                    "file_type": row.get("file_type"),
+                    "project_name": row.get("project_name"),
+                    "organization": row.get("organization"),
+                    "question": row.get("question"),
+                    "retrieval_query": row.get("retrieval_query"),
+                    "reference": row.get("reference"),
+                    "response": row.get("response"),
+                    "embedding_provider": row.get("embedding_provider"),
+                    "embedding_model": row.get("embedding_model"),
+                    "llm_provider": row.get("llm_provider"),
+                    "llm_model": row.get("llm_model"),
+                    "vector_db_type": row.get("vector_db_type"),
+                    "experiment_key": row.get("experiment_key"),
+                    "retrieved_ids": str(row.get("retrieved_ids", [])),
+                    "retrieval_hit": row.get("doc_id") in set(retrieved_ids_topk),
+                    "keyword_group_recall": row.get("keyword_group_recall"),
+                    "matched_keyword_group_count": row.get("matched_keyword_group_count"),
+                    "total_keyword_group_count": row.get("total_keyword_group_count"),
+                    "missed_groups": str(row.get("missed_groups", [])),
+                    "retrieval_latency_sec": row.get("retrieval_latency_sec"),
+                    "generation_latency_sec": row.get("generation_latency_sec"),
+                    "total_latency_sec": row.get("total_latency_sec"),
+                    "input_tokens": row.get("input_tokens"),
+                    "output_tokens": row.get("output_tokens"),
+                    "estimated_cost": row.get("estimated_cost", 0.0),
+                    "error": row.get("error", ""),
+                }
+            )
 
         summary_df = pd.DataFrame(summary_rows)
 
@@ -2205,9 +2670,6 @@ class RAGEvalPipeline:
 
         return summary_df
 
-    # ---------------------------------------------------------
-    # Full run
-    # ---------------------------------------------------------
     def run(self) -> Dict[str, Any]:
         """
         전체 RAG 평가 파이프라인을 실행합니다.
@@ -2226,7 +2688,6 @@ class RAGEvalPipeline:
         self.setup_vector_store()
         self.build_or_load_vector_store()
 
-        # HF 경로는 RAGRetriever가 필요하지만, OpenAI 경로는 vector_store.search()를 직접 사용합니다.
         if self._embedding_provider() != "openai":
             self.setup_retriever()
 
@@ -2235,15 +2696,11 @@ class RAGEvalPipeline:
 
         results = self.evaluate()
 
-        # 실제 사용자 질문 리스트를 실행하고 팀원 평가용
         human_eval_outputs = self.run_human_eval_queries_if_enabled()
         results["human_eval_outputs"] = human_eval_outputs
 
         return results
 
-    # ---------------------------------------------------------
-    # Cleanup
-    # ---------------------------------------------------------
     def cleanup(self) -> None:
         """
         GPU/CPU 메모리 정리를 수행합니다.
@@ -2251,19 +2708,19 @@ class RAGEvalPipeline:
         if self.generator is not None:
             self.generator.unload()
             self.generator = None
-    
+
         if self.embedder is not None:
             if hasattr(self.embedder, "unload"):
                 self.embedder.unload()
             else:
                 del self.embedder
-    
+
             self.embedder = None
-    
+
         gc.collect()
-    
+
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             torch.cuda.ipc_collect()
-    
+
         print("Pipeline cleanup 완료")

@@ -6,6 +6,7 @@
 # - tokenizer/model 로드
 # - Qwen Instruct chat template 적용
 # - RFP RAG prompt 기반 답변 생성
+# - Qwen3 계열의 <think>...</think> reasoning 출력 제거
 # - latency, token count 기록
 # - GPU 메모리 정리 함수 제공
 #
@@ -27,6 +28,7 @@
 from __future__ import annotations
 
 import gc
+import re
 import time
 from typing import List, Dict, Any, Optional
 
@@ -200,6 +202,50 @@ class LLMGenerator:
                 "먼저 generator.load_model() 또는 generator.load()를 호출하세요."
             )
 
+    @staticmethod
+    def _strip_think_tags(text: str) -> str:
+        """
+        Qwen3 계열 모델이 출력하는 <think>...</think> 구간과
+        태그 없이 출력된 영어 reasoning prefix를 제거합니다.
+        """
+        text = str(text or "")
+
+        # 1. 정상적으로 닫힌 <think>...</think> 블록 제거
+        text = re.sub(
+            r"<think>.*?</think>",
+            "",
+            text,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+
+        # 2. 단독으로 남은 <think>, </think> 태그 제거
+        text = re.sub(
+            r"</?think>",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        ).strip()
+
+        # 3. Qwen3가 태그 없이 영어 reasoning으로 시작하는 경우 제거
+        reasoning_prefix_patterns = [
+            r"^Okay,\s*let'?s.*?(?=\n\s*(?:[-•○●]|\d+[.)]|[가-힣]))",
+            r"^Okay,.*?(?=\n\s*(?:[-•○●]|\d+[.)]|[가-힣]))",
+            r"^Let'?s.*?(?=\n\s*(?:[-•○●]|\d+[.)]|[가-힣]))",
+            r"^I need to.*?(?=\n\s*(?:[-•○●]|\d+[.)]|[가-힣]))",
+            r"^The user is asking.*?(?=\n\s*(?:[-•○●]|\d+[.)]|[가-힣]))",
+            r"^We need to.*?(?=\n\s*(?:[-•○●]|\d+[.)]|[가-힣]))",
+        ]
+
+        for pattern in reasoning_prefix_patterns:
+            text = re.sub(
+                pattern,
+                "",
+                text,
+                flags=re.DOTALL | re.IGNORECASE,
+            ).strip()
+
+        return text.strip()
+
     # ---------------------------------------------------------
     # device 관련
     # ---------------------------------------------------------
@@ -240,15 +286,28 @@ class LLMGenerator:
     ) -> str:
         """
         tokenizer의 chat template을 적용해 prompt text를 생성합니다.
+    
+        Qwen3 계열 모델은 enable_thinking=False를 전달하면
+        thinking mode를 비활성화할 수 있습니다.
+        Qwen2.5 등 해당 인자를 지원하지 않는 모델도 있으므로
+        TypeError 발생 시 기존 방식으로 fallback합니다.
         """
         if self.tokenizer is None:
             raise RuntimeError("Tokenizer가 로드되지 않았습니다.")
-
-        return self.tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=add_generation_prompt,
-        )
+    
+        try:
+            return self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=add_generation_prompt,
+                enable_thinking=False,
+            )
+        except TypeError:
+            return self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=add_generation_prompt,
+            )
 
     def tokenize_prompt(self, prompt_text: str) -> Dict[str, Any]:
         """
@@ -344,6 +403,9 @@ class LLMGenerator:
             generated_ids,
             skip_special_tokens=True,
         ).strip()
+
+        # Qwen3 계열 모델이 출력하는 <think>...</think> reasoning 구간 제거
+        response_text = self._strip_think_tags(response_text)
 
         result = {
             "response": response_text,
