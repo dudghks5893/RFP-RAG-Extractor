@@ -5,8 +5,10 @@
 # 주요 역할:
 # - tokenizer/model 로드
 # - Qwen Instruct chat template 적용
+# - Qwen3 thinking mode 비활성화(enable_thinking=False)
 # - RFP RAG prompt 기반 답변 생성
 # - Qwen3 계열의 <think>...</think> reasoning 출력 제거
+# - 선택적 bitsandbytes 4bit 양자화 로드 지원
 # - latency, token count 기록
 # - GPU 메모리 정리 함수 제공
 #
@@ -15,9 +17,10 @@
 # from src.generation.llm_generator import LLMGenerator
 #
 # generator = LLMGenerator(
-#     model_name="Qwen/Qwen2.5-1.5B-Instruct",
-#     max_new_tokens=512,
+#     model_name="Qwen/Qwen3-14B",
+#     max_new_tokens=384,
 #     do_sample=False,
+#     load_in_4bit=True,
 # ).load()
 #
 # result = generator.generate_from_retrieved_chunks(
@@ -33,7 +36,11 @@ import time
 from typing import List, Dict, Any, Optional
 
 import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import (
+    AutoTokenizer,
+    AutoModelForCausalLM,
+    BitsAndBytesConfig,
+)
 
 from src.generation.prompts import build_rfp_rag_messages
 from src.utils.progress_utils import log_step
@@ -42,9 +49,6 @@ from src.utils.progress_utils import log_step
 class LLMGenerator:
     """
     Hugging Face CausalLM 기반 답변 생성기입니다.
-
-    현재 베이스라인 모델:
-    - Qwen/Qwen2.5-1.5B-Instruct
 
     Parameters
     ----------
@@ -66,6 +70,7 @@ class LLMGenerator:
     torch_dtype:
         모델 로드 dtype입니다.
         None이면 CUDA 사용 가능 시 float16, 아니면 float32를 사용합니다.
+        load_in_4bit=True일 때는 quantization_config가 우선 적용됩니다.
 
     device_map:
         transformers의 device_map 옵션입니다.
@@ -85,6 +90,22 @@ class LLMGenerator:
 
     include_metadata:
         prompt context에 doc_id, chunk_id, section_title 등 메타데이터 포함 여부입니다.
+
+    load_in_4bit:
+        True이면 bitsandbytes 4bit quantization으로 모델을 로드합니다.
+        Qwen3-14B처럼 FP16으로는 VRAM이 부족한 모델을 22GB GPU에서 실험할 때 사용합니다.
+
+    bnb_4bit_quant_type:
+        bitsandbytes 4bit quantization type입니다.
+        보통 "nf4"를 사용합니다.
+
+    bnb_4bit_compute_dtype:
+        4bit 연산 dtype입니다.
+        지원값: "float16", "bfloat16", "float32"
+
+    bnb_4bit_use_double_quant:
+        True이면 double quantization을 사용합니다.
+        보통 VRAM 절약을 위해 True를 사용합니다.
     """
 
     def __init__(
@@ -100,6 +121,10 @@ class LLMGenerator:
         prompt_type: str = "default",
         max_chars_per_chunk: Optional[int] = None,
         include_metadata: bool = True,
+        load_in_4bit: bool = False,
+        bnb_4bit_quant_type: str = "nf4",
+        bnb_4bit_compute_dtype: str = "float16",
+        bnb_4bit_use_double_quant: bool = True,
     ):
         self.model_name = model_name
         self.max_new_tokens = max_new_tokens
@@ -113,6 +138,11 @@ class LLMGenerator:
         self.prompt_type = prompt_type
         self.max_chars_per_chunk = max_chars_per_chunk
         self.include_metadata = include_metadata
+
+        self.load_in_4bit = load_in_4bit
+        self.bnb_4bit_quant_type = bnb_4bit_quant_type
+        self.bnb_4bit_compute_dtype = bnb_4bit_compute_dtype
+        self.bnb_4bit_use_double_quant = bnb_4bit_use_double_quant
 
         self.tokenizer = None
         self.model = None
@@ -142,6 +172,56 @@ class LLMGenerator:
 
         return torch.float32
 
+    @staticmethod
+    def _resolve_compute_dtype(dtype_name: str) -> torch.dtype:
+        """
+        YAML 또는 문자열 설정으로 들어온 bitsandbytes compute dtype을 torch dtype으로 변환합니다.
+
+        Parameters
+        ----------
+        dtype_name:
+            "float16", "fp16", "bfloat16", "bf16", "float32", "fp32"
+
+        Returns
+        -------
+        torch.dtype
+        """
+        dtype_name = str(dtype_name or "float16").strip().lower()
+
+        if dtype_name in {"float16", "fp16"}:
+            return torch.float16
+
+        if dtype_name in {"bfloat16", "bf16"}:
+            return torch.bfloat16
+
+        if dtype_name in {"float32", "fp32"}:
+            return torch.float32
+
+        raise ValueError(
+            f"지원하지 않는 bnb_4bit_compute_dtype입니다: {dtype_name}. "
+            "사용 가능 값: float16, bfloat16, float32"
+        )
+
+    def _build_quantization_config(self) -> Optional[BitsAndBytesConfig]:
+        """
+        4bit 양자화 설정을 생성합니다.
+
+        load_in_4bit=False이면 None을 반환하고 기존 torch_dtype 로딩 방식을 사용합니다.
+        """
+        if not self.load_in_4bit:
+            return None
+
+        compute_dtype = self._resolve_compute_dtype(
+            self.bnb_4bit_compute_dtype
+        )
+
+        return BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type=self.bnb_4bit_quant_type,
+            bnb_4bit_compute_dtype=compute_dtype,
+            bnb_4bit_use_double_quant=self.bnb_4bit_use_double_quant,
+        )
+
     def load_tokenizer(self) -> "LLMGenerator":
         """
         tokenizer를 로드합니다.
@@ -157,16 +237,28 @@ class LLMGenerator:
     def load_model(self) -> "LLMGenerator":
         """
         causal language model을 로드합니다.
+
+        load_in_4bit=True이면 bitsandbytes 4bit quantization으로 로드합니다.
+        load_in_4bit=False이면 기존 torch_dtype 기반 로딩 방식을 유지합니다.
         """
         dtype = self._resolve_torch_dtype()
+        quantization_config = self._build_quantization_config()
+
+        model_kwargs = {
+            "device_map": self.device_map,
+            "trust_remote_code": self.trust_remote_code,
+            "low_cpu_mem_usage": self.low_cpu_mem_usage,
+        }
+
+        if quantization_config is not None:
+            model_kwargs["quantization_config"] = quantization_config
+        else:
+            model_kwargs["torch_dtype"] = dtype
 
         with log_step(f"LLM model load: {self.model_name}"):
             self.model = AutoModelForCausalLM.from_pretrained(
                 self.model_name,
-                torch_dtype=dtype,
-                device_map=self.device_map,
-                trust_remote_code=self.trust_remote_code,
-                low_cpu_mem_usage=self.low_cpu_mem_usage,
+                **model_kwargs,
             )
 
         self.model.eval()
@@ -207,6 +299,8 @@ class LLMGenerator:
         """
         Qwen3 계열 모델이 출력하는 <think>...</think> 구간과
         태그 없이 출력된 영어 reasoning prefix를 제거합니다.
+
+        enable_thinking=False를 사용하더라도 안전장치로 유지합니다.
         """
         text = str(text or "")
 
@@ -255,7 +349,7 @@ class LLMGenerator:
         모델 입력 tensor를 올릴 device를 반환합니다.
 
         device_map='auto'로 여러 device에 분산된 경우에도,
-        일반적으로 첫 번째 parameter의 device에 입력을 올리면 됩니다.
+        일반적으로 첫 번째 parameter의 device에 입력을 올립니다.
         """
         self._ensure_loaded()
         return next(self.model.parameters()).device
@@ -286,15 +380,16 @@ class LLMGenerator:
     ) -> str:
         """
         tokenizer의 chat template을 적용해 prompt text를 생성합니다.
-    
+
         Qwen3 계열 모델은 enable_thinking=False를 전달하면
         thinking mode를 비활성화할 수 있습니다.
+
         Qwen2.5 등 해당 인자를 지원하지 않는 모델도 있으므로
         TypeError 발생 시 기존 방식으로 fallback합니다.
         """
         if self.tokenizer is None:
             raise RuntimeError("Tokenizer가 로드되지 않았습니다.")
-    
+
         try:
             return self.tokenizer.apply_chat_template(
                 messages,
@@ -497,6 +592,10 @@ class LLMGenerator:
             "prompt_type": self.prompt_type,
             "max_chars_per_chunk": self.max_chars_per_chunk,
             "include_metadata": self.include_metadata,
+            "load_in_4bit": self.load_in_4bit,
+            "bnb_4bit_quant_type": self.bnb_4bit_quant_type,
+            "bnb_4bit_compute_dtype": self.bnb_4bit_compute_dtype,
+            "bnb_4bit_use_double_quant": self.bnb_4bit_use_double_quant,
             "tokenizer_loaded": self.tokenizer is not None,
             "model_loaded": self.model is not None,
             "device": str(self.device) if self.model is not None else None,
@@ -515,9 +614,16 @@ def load_llm_generator(
     prompt_type: str = "default",
     max_chars_per_chunk: Optional[int] = None,
     include_metadata: bool = True,
+    load_in_4bit: bool = False,
+    bnb_4bit_quant_type: str = "nf4",
+    bnb_4bit_compute_dtype: str = "float16",
+    bnb_4bit_use_double_quant: bool = True,
 ) -> LLMGenerator:
     """
     LLMGenerator를 생성하고 바로 load까지 수행하는 편의 함수입니다.
+
+    load_in_4bit=False이면 기존 HF 모델 로딩 방식과 동일하게 동작합니다.
+    load_in_4bit=True이면 bitsandbytes 4bit quantization으로 모델을 로드합니다.
     """
     generator = LLMGenerator(
         model_name=model_name,
@@ -531,6 +637,10 @@ def load_llm_generator(
         prompt_type=prompt_type,
         max_chars_per_chunk=max_chars_per_chunk,
         include_metadata=include_metadata,
+        load_in_4bit=load_in_4bit,
+        bnb_4bit_quant_type=bnb_4bit_quant_type,
+        bnb_4bit_compute_dtype=bnb_4bit_compute_dtype,
+        bnb_4bit_use_double_quant=bnb_4bit_use_double_quant,
     )
 
     generator.load()

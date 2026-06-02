@@ -2073,6 +2073,19 @@ class RAGEvalPipeline:
     def load_generator(self):
         """
         llm.provider 값에 따라 HF 또는 OpenAI generator를 로드합니다.
+
+        HuggingFace provider에서는 선택적으로 bitsandbytes 4bit quantization을 사용할 수 있습니다.
+
+        YAML 예:
+        llm:
+          provider: huggingface
+          hf_model_name: Qwen/Qwen3-14B
+          load_in_4bit: true
+          bnb_4bit_quant_type: nf4
+          bnb_4bit_compute_dtype: float16
+          bnb_4bit_use_double_quant: true
+
+        load_in_4bit가 없거나 false이면 기존 FP16/FP32 로딩 방식으로 동작합니다.
         """
         llm_cfg = self.config["llm"]
         provider = self._llm_provider()
@@ -2119,9 +2132,27 @@ class RAGEvalPipeline:
             prompt_type=llm_cfg.get("prompt_type", "default"),
             max_chars_per_chunk=llm_cfg.get("max_chars_per_chunk"),
             include_metadata=llm_cfg.get("include_metadata", True),
+
+            # =====================================================
+            # bitsandbytes 4bit quantization options
+            # =====================================================
+            # 기존 모델은 load_in_4bit가 없거나 false이면 그대로 동작합니다.
+            # Qwen3-14B처럼 22GB GPU에서 FP16 OOM이 나는 모델은 true로 설정합니다.
+            load_in_4bit=llm_cfg.get("load_in_4bit", False),
+            bnb_4bit_quant_type=llm_cfg.get("bnb_4bit_quant_type", "nf4"),
+            bnb_4bit_compute_dtype=llm_cfg.get(
+                "bnb_4bit_compute_dtype",
+                "float16",
+            ),
+            bnb_4bit_use_double_quant=llm_cfg.get(
+                "bnb_4bit_use_double_quant",
+                True,
+            ),
         )
 
         print("HF generator 로드:", llm_cfg["hf_model_name"])
+        print("HF generator 4bit:", llm_cfg.get("load_in_4bit", False))
+
         return self.generator
 
     def run_single_rag(
