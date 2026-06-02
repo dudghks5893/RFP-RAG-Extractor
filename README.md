@@ -257,7 +257,7 @@ python main.py --scenario B
 
 ##  한성택
 
-🔗 **[협업일지 바로가기]()**
+🔗 **[협업일지 바로가기](https://app.notion.com/p/Daily-3-3735f26f8906806e9969f7a995385cc7?source=copy_link)**
 
 ---
 
