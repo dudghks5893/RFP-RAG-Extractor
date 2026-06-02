@@ -234,3 +234,16 @@ pip install -r requirements-jupyter.txt
 # 시나리오 선택 실행 (예시)
 python main.py --scenario A
 python main.py --scenario B
+
+
+### 협업일지 링크  
+- **채영환
+[**협업일지**](https://docs.google.com/spreadsheets/d/1b9u-sBXNxJb2mB2bEwguM-V0bKnn_s1h32ijOVrwhq4/edit?usp=sharing) 
+- **원숙현
+[**협업일지**]()  
+- **한성택
+[**협업일지**]()  
+- **양기우
+[**협업일지**](https://app.notion.com/p/360fe74d9d2d800db947d59fda908db8?source=copy_link)
+
+
