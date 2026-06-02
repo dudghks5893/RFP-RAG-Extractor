@@ -251,7 +251,7 @@ python main.py --scenario B
 
 ##  원숙현
 
-🔗 **[협업일지 바로가기]()**
+🔗 **[협업일지 바로가기](https://app.notion.com/p/36012f601f4380288705c49aebb1d9aa?source=copy_link)**
 
 ---
 
