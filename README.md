@@ -16,7 +16,7 @@
 ## 📅 프로젝트 일정 (Timeline)
 
 - **프로젝트 시작**: 2026-05-13
-- **프로젝트 발표**: 2026-06-02
+- **프로젝트 발표**: 2026-06-04
 - **프로젝트 종료**: 2026-06-04
 
 일정표: https://docs.google.com/spreadsheets/d/1DTFdOJc9QJ7a0s2nsPM6GOhIQz8b61wI/edit?usp=drive_link&ouid=112188858007110237324&rtpof=true&sd=true
@@ -238,6 +238,9 @@ python main.py --scenario B
 
 
 ```
+
+<img width="1113" height="833" alt="스크린샷 2026-05-29 오전 6 07 04" src="https://github.com/user-attachments/assets/9a0752e4-a679-4161-afaf-c39553bd0035" />
+
 
 ---
 
