@@ -252,7 +252,11 @@ python main.py --scenario B
 
 ---
 
-# 📝 협업일지 (Collaboration Log)
+# 📝 협업일지 (Collaboration Log) & 보고서
+
+##  보고서
+
+🔗 **[보고서 바로가기](https://drive.google.com/file/d/16ZPs5o_2Qe0ZJAQZ5cQYqAw6kw-yP4a1/view?usp=sharing)**
 
 ##  채영환
 
