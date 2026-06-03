@@ -238,6 +238,9 @@ python main.py --scenario B
 
 
 ```
+---
+## 실행 결과
+
 
 <img width="1113" height="833" alt="스크린샷 2026-05-29 오전 6 07 04" src="https://github.com/user-attachments/assets/9a0752e4-a679-4161-afaf-c39553bd0035" />
 
