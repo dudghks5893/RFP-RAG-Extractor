@@ -239,11 +239,16 @@ python main.py --scenario B
 
 ```
 ---
-## 실행 결과
+# 실행 결과
 
+## 질문1
 
 <img width="1113" height="833" alt="스크린샷 2026-05-29 오전 6 07 04" src="https://github.com/user-attachments/assets/9a0752e4-a679-4161-afaf-c39553bd0035" />
+<br>
+<br>
 
+## 질문2
+<img width="1847" height="868" alt="Screenshot 2026-06-01 at 6 25 11 PM (2)" src="https://github.com/user-attachments/assets/2c348ce6-1ad9-4d59-91a7-aa708e73fe06" />
 
 ---
 
