@@ -256,7 +256,7 @@ python main.py --scenario B
 
 ##  보고서
 
-🔗 **[보고서 바로가기](https://drive.google.com/file/d/16ZPs5o_2Qe0ZJAQZ5cQYqAw6kw-yP4a1/view?usp=sharing)**
+🔗 **[보고서 바로가기](https://drive.google.com/file/d/1wYfD7Ac_bMgB0CyA_J1D3tR0psFWHvAn/view?usp=drive_link)**
 
 ##  채영환
 
